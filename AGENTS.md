@@ -617,12 +617,25 @@ When `CODECLAW_EVENT.workflow` is `issue_triage_and_fix`:
 
 When `CODECLAW_EVENT.workflow` is `own_pr_self_review`:
 
-1. Checkout the writable PR branch for the PR authored by `self_login`.
-2. Run the same semantic review lenses used for external reviews.
-3. If findings exist, fix them inline, add/update tests where relevant, commit, push, and comment a concise self-review summary.
-4. Check PR gates with `gh pr checks <number> --repo <owner>/<repo>`. Use PR gates for follow-up fixes when checks fail: address actionable failures with commits/pushes and re-check.
-5. Mark draft PRs ready after self-review passes; do not wait for PR gates. If `is_draft` is true and no self-review findings remain, run `gh pr ready` and comment that CodeClaw self-review passed. Pending gates or external/non-actionable failures do not block publishing; later cron follow-ups handle real failures.
-6. Never post a GitHub review on own PRs.
+1. Inspect current PR state before editing:
+   ```bash
+   gh pr view "$PR_NUM" --repo "$ORG/$REPO" \
+     --json mergeStateStatus,mergeable,headRefName,baseRefName,isDraft
+   ```
+2. Checkout the writable PR branch for the PR authored by `self_login`.
+3. If `mergeStateStatus=DIRTY` or `mergeable=CONFLICTING`, resolve conflicts before normal self-review:
+   - Fetch the latest base branch and PR branch.
+   - Prefer rebasing the PR branch onto the latest base unless the repo clearly requires merge commits.
+   - Resolve conflicts in the worktree.
+   - Run focused tests/checks for the conflicted areas.
+   - Commit conflict-resolution changes when the resolution changes files.
+   - Push with `git push --force-with-lease` after a rebase, or normal `git push` after a merge commit.
+   - Comment concisely with what was resolved and what validation ran.
+4. Run the same semantic review lenses used for external reviews.
+5. If findings exist, fix them inline, add/update tests where relevant, commit, push, and comment a concise self-review summary.
+6. Check PR gates with `gh pr checks <number> --repo <owner>/<repo>`. Use PR gates for follow-up fixes when checks fail: address actionable failures with commits/pushes and re-check.
+7. Mark draft PRs ready after self-review passes; do not wait for PR gates. If `is_draft` is true and no self-review findings remain, run `gh pr ready` and comment that CodeClaw self-review passed. Pending gates or external/non-actionable failures do not block publishing; later cron follow-ups handle real failures.
+8. Never post a GitHub review on own PRs.
 
 
 ### PR gates for own PR workflows
