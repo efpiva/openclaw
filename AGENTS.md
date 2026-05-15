@@ -512,14 +512,14 @@ config, handles retries and rate limiting natively):
   "tool": "message",
   "action": "send",
   "channel": "telegram",
-  "target": "-1003967207344:topic:1",
+  "target": "-1003898998425:topic:1",
   "message": "<body — see template below>"
 }
 ```
 
 **Target format is mandatory**: always set `target` to the explicit General
-forum topic target `-1003967207344:topic:1` for this CodeClaw group. Do **not**
-send to bare `-1003967207344`, and do **not** rely on a separate `threadId: "1"`
+forum topic target `-1003898998425:topic:1` for this CodeClaw group. Do **not**
+send to bare `-1003898998425`, and do **not** rely on a separate `threadId: "1"`
 field; that can land outside the General topic. The canonical OpenClaw Telegram
 forum-topic target format is `<chatId>:topic:<threadId>`.
 
@@ -533,7 +533,7 @@ to the per-PR thread). For private supergroups, strip the `-100` prefix
 from the chat id:
 
 ```
-chatId = -1003967207344  →  t.me/c/3967207344/<thread_id>
+chatId = -1003898998425  →  t.me/c/3898998425/<thread_id>
 ```
 
 You can infer `<thread_id>` from the running session's key
@@ -579,7 +579,7 @@ Narrate AFTER both sends complete: `Step 9 done: digests posted to PR topic and 
 - The native `message` tool handles the bot token, rate limits, and channel
   routing — do NOT shell out to `curl` against `api.telegram.org`.
 - For #general, the transcript/tool call must visibly show
-  `target: "-1003967207344:topic:1"`; if it shows bare `-1003967207344`, the
+  `target: "-1003898998425:topic:1"`; if it shows bare `-1003898998425`, the
   send is wrong and must be corrected before cleanup.
 
 ### 10. Clean up
