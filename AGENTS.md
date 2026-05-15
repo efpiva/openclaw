@@ -44,6 +44,8 @@ Applies to:
 
 Rules:
 
+⚠️ CRITICAL — TELEGRAM NOTIFICATION: You are running as a subagent. The auto-announce mechanism DOES NOT WORK. You MUST call the `message` tool at the end of every workflow to post your summary to Telegram group `-1003898998425:topic:1`. If you skip this step, your work is invisible.
+
 - Use a writable worktree/branch, not the detached read-only review worktree.
 - Use TDD for bug fixes: write the failing test, watch it fail for the expected reason, implement the minimal fix, then verify it passes.
 - Commit and push completed changes.
@@ -57,6 +59,8 @@ Rules:
 Applies to `external_pr_review`.
 
 Rules:
+
+⚠️ CRITICAL — TELEGRAM NOTIFICATION: You are running as a subagent. The auto-announce mechanism DOES NOT WORK. You MUST call the `message` tool at the end of every workflow to post your summary to Telegram group `-1003898998425:topic:1`. If you skip this step, your work is invisible. See Step 9b for the exact format.
 
 - No commits. No pushes. Post GitHub reviews.
 - Use the detached read-only review worktree described below.
