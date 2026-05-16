@@ -660,6 +660,54 @@ fact instead, for example: `clean against origin/main@<base_sha>` plus GitHub's
 current `mergeStateStatus`/`mergeable` values. If the final fetch fails, mark the
 run `[blocked]` rather than posting stale readiness.
 
+## Own PR duplicate-action guard — mandatory
+
+After the write-mode PR state preflight and before edits, comments, or gate
+summaries, determine whether CodeClaw has already handled the current PR state.
+Do not act just because a cron/event fired again.
+
+Collect:
+
+```bash
+GH_USER=$(gh api user --jq .login)
+HEAD_SHA=$(jq -r .headRefOid <<<"$PR_JSON")
+BASE_SHA=$(git rev-parse "origin/$BASE_REF")
+ISSUE_COMMENTS=$(gh api "repos/$ORG/$REPO/issues/$PR_NUM/comments?per_page=100")
+REVIEW_COMMENTS=$(gh api "repos/$ORG/$REPO/pulls/$PR_NUM/comments?per_page=100")
+PR_REVIEWS=$(gh api "repos/$ORG/$REPO/pulls/$PR_NUM/reviews?per_page=100")
+```
+
+Find the newest CodeClaw-authored own-PR action comment by `$GH_USER` whose body
+starts with `🦞 CodeClaw`/`🦞 Codeclaw` or contains `<!-- codeclaw:own-pr`. Then
+check whether any of these are newer than that comment:
+
+- a PR head commit (`HEAD_SHA` differs from the comment's recorded head);
+- non-self issue/review/inline feedback;
+- a required-check failing/cancelled/pending set or latest run/build id changed;
+- base branch moved in a way that changes the final freshness/merge-tree result;
+- draft/open state changed.
+
+If none changed, skip cleanly and post no duplicate PR/Telegram summary:
+
+```bash
+echo "Already handled PR #$PR_NUM at head $HEAD_SHA with unchanged feedback/gates/base; skipping."
+exit 0
+```
+
+If anything changed, proceed, but the new summary/comment must explain the new
+trigger (`new head`, `new non-self feedback`, `gate set changed`, `base moved`,
+`draft-state changed`, etc.).
+
+Every own-PR PR comment or Telegram digest must include a compact machine-readable
+marker so future runs can make this decision reliably:
+
+```html
+<!-- codeclaw:own-pr workflow=<own_pr_self_review|own_pr_comment_response> head=<HEAD_SHA> base=<BASE_SHA> gate=<latest-run-or-check-signature> feedback_max_id=<latest-non-self-comment-id-or-none> -->
+```
+
+The visible text should still be human-readable; the marker is for dedupe only
+and must not contain secrets or raw logs.
+
 ## Workflow: issue_triage_and_fix
 
 When `CODECLAW_EVENT.workflow` is `issue_triage_and_fix`:
@@ -678,7 +726,10 @@ When `CODECLAW_EVENT.workflow` is `own_pr_self_review`:
    summarizing. This includes fetching base/head, checking out the writable PR
    branch, hard-resetting it to `origin/$HEAD_REF`, recording `BASE_SHA` and
    `HEAD_SHA`, and running `git merge-tree` against the fetched base.
-2. If the preflight reports a conflict, resolve conflicts before normal
+2. Run the mandatory own PR duplicate-action guard. If CodeClaw already handled
+   this head/base/feedback/gate state, exit cleanly without posting duplicate
+   comments or Telegram summaries.
+3. If the preflight reports a conflict, resolve conflicts before normal
    self-review:
    - Prefer rebasing the PR branch onto the latest base unless the repo clearly requires merge commits.
    - Resolve conflicts in the worktree.
@@ -686,16 +737,16 @@ When `CODECLAW_EVENT.workflow` is `own_pr_self_review`:
    - Commit conflict-resolution changes when the resolution changes files.
    - Push with `git push --force-with-lease` after a rebase, or normal `git push` after a merge commit.
    - Comment concisely with what was resolved, the base SHA used, and what validation ran.
-3. Run the same semantic review lenses used for external reviews.
-4. If findings exist, fix them inline, add/update tests where relevant, commit, push, and comment a concise self-review summary.
-5. Check PR gates with `gh pr checks <number> --repo <owner>/<repo>`. Use PR gates for follow-up fixes when checks fail: address actionable failures with commits/pushes and re-check. A self-review or gate follow-up is **not complete** until every current-head failing/cancelled/pending required check is classified as one of: `actionable-fixed`, `actionable-blocked`, `infra/non-actionable`, `expected-neutral`, or `pending-watch`.
-6. Immediately before posting any PR or Telegram summary, repeat the final
+4. Run the same semantic review lenses used for external reviews.
+5. If findings exist, fix them inline, add/update tests where relevant, commit, push, and comment a concise self-review summary.
+6. Check PR gates with `gh pr checks <number> --repo <owner>/<repo>`. Use PR gates for follow-up fixes when checks fail: address actionable failures with commits/pushes and re-check. A self-review or gate follow-up is **not complete** until every current-head failing/cancelled/pending required check is classified as one of: `actionable-fixed`, `actionable-blocked`, `infra/non-actionable`, `expected-neutral`, or `pending-watch`.
+7. Immediately before posting any PR or Telegram summary, repeat the final
    freshness check from the preflight. If base/head moved, recompute merge state
    and gate classification first. Summaries must say `clean against
    origin/<base>@<base_sha>` or `conflicting against origin/<base>@<base_sha>`,
    never unqualified `mergeable`.
-7. Mark draft PRs ready after self-review passes; do not wait for PR gates. If `is_draft` is true and no self-review findings remain, run `gh pr ready` and comment that CodeClaw self-review passed. Pending gates or external/non-actionable failures do not block publishing; later cron follow-ups handle real failures.
-8. Never post a GitHub review on own PRs.
+8. Mark draft PRs ready after self-review passes; do not wait for PR gates. If `is_draft` is true and no self-review findings remain, run `gh pr ready` and comment that CodeClaw self-review passed. Pending gates or external/non-actionable failures do not block publishing; later cron follow-ups handle real failures.
+9. Never post a GitHub review on own PRs.
 
 
 ### PR gates for own PR workflows
@@ -732,15 +783,18 @@ When `CODECLAW_EVENT.workflow` is `own_pr_comment_response`:
    summarizing. If the PR is conflicting, resolve the conflict first or post a
    scoped blocked/conflict summary; do not process feedback as if the head were
    merge-ready.
-3. Address related feedback together with code/docs/tests as needed.
-4. Commit and push one coherent change set when possible.
-5. Reply to individual threads/comments when possible; otherwise post one PR summary. If feedback requires clarification, ask instead of guessing.
-6. Immediately before posting any PR or Telegram summary, repeat the final
+3. Run the mandatory own PR duplicate-action guard. If CodeClaw already handled
+   this head/base/feedback/gate state, exit cleanly without posting duplicate
+   comments or Telegram summaries.
+4. Address related feedback together with code/docs/tests as needed.
+5. Commit and push one coherent change set when possible.
+6. Reply to individual threads/comments when possible; otherwise post one PR summary. If feedback requires clarification, ask instead of guessing.
+7. Immediately before posting any PR or Telegram summary, repeat the final
    freshness check from the preflight. If base/head moved, recompute merge state
    and gate classification first. Summaries must say `clean against
    origin/<base>@<base_sha>` or `conflicting against origin/<base>@<base_sha>`,
    never unqualified `mergeable`.
-7. Never post a GitHub review on own PRs.
+8. Never post a GitHub review on own PRs.
 
 ## Memory & learnings
 
