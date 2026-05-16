@@ -167,9 +167,10 @@ fi
 # on .git/index.lock — retry once.
 git -C "$CACHE" fetch --no-tags --prune origin \
   || (sleep 2 && git -C "$CACHE" fetch --no-tags --prune origin) \
-  || echo "[warn] cache fetch failed twice; proceeding with stale cache" >&2
+  || { echo "[blocked] cache fetch failed twice; refusing to review against stale base" >&2; exit 3; }
 
-git -C "$CACHE" fetch --no-tags origin "+refs/pull/$PR_NUM/head:refs/codeclaw/pr-$PR_NUM"
+git -C "$CACHE" fetch --no-tags origin "+refs/pull/$PR_NUM/head:refs/codeclaw/pr-$PR_NUM" \
+  || { echo "[blocked] PR head fetch failed; refusing to review stale head" >&2; exit 3; }
 ```
 
 **Worktree** (stable path per PR — same place every review of this PR;
@@ -607,6 +608,58 @@ git -C "$CACHE" update-ref -d "refs/codeclaw/pr-$PR_NUM" 2>/dev/null
 - Every external GitHub review I post carries the `🦞 Codeclaw review —` identity prefix.
 - Never post a GitHub review on own PRs.
 
+## Write-mode PR state preflight — mandatory for own PR workflows
+
+Before `own_pr_self_review` or `own_pr_comment_response` makes source edits,
+classifies gates, or posts any readiness/mergeability summary, refresh both the
+base and head and record exactly what was checked. GitHub's `mergeable` value is
+a useful signal, but the local conflict result is only valid for the base SHA I
+just fetched.
+
+```bash
+PR_JSON=$(gh pr view "$PR_NUM" --repo "$ORG/$REPO" \
+  --json mergeStateStatus,mergeable,headRefOid,headRefName,baseRefOid,baseRefName,isDraft)
+BASE_REF=$(jq -r .baseRefName <<<"$PR_JSON")
+HEAD_REF=$(jq -r .headRefName <<<"$PR_JSON")
+
+# Refuse stale local state: both fetches must succeed.
+git fetch --no-tags --prune origin \
+  || { echo "[blocked] origin fetch failed; refusing stale PR state" >&2; exit 3; }
+git fetch --no-tags origin \
+  "+refs/heads/$BASE_REF:refs/remotes/origin/$BASE_REF" \
+  "+refs/heads/$HEAD_REF:refs/remotes/origin/$HEAD_REF" \
+  || { echo "[blocked] base/head fetch failed; refusing stale PR state" >&2; exit 3; }
+
+git checkout "$HEAD_REF"
+git reset --hard "origin/$HEAD_REF"
+BASE_SHA=$(git rev-parse "origin/$BASE_REF")
+HEAD_SHA=$(git rev-parse HEAD)
+
+# Prefer the exit status from modern git merge-tree. Do not grep broad strings
+# like "changed in both"; report real conflicts from merge-tree output.
+if ! git merge-tree "origin/$BASE_REF" HEAD >/tmp/codeclaw-merge-tree.txt 2>&1; then
+  echo "[conflict] PR head $HEAD_SHA conflicts with $BASE_REF@$BASE_SHA" >&2
+  sed -n '1,200p' /tmp/codeclaw-merge-tree.txt >&2
+  MERGE_CONFLICTING=1
+else
+  MERGE_CONFLICTING=0
+fi
+```
+
+If `MERGE_CONFLICTING=1`, resolve the conflict before normal self-review/comment
+response work. Prefer rebasing the PR branch onto the latest base unless the repo
+clearly requires merge commits; after resolving, run focused validation for the
+conflicted areas, commit resolution changes if files changed, and push safely
+(`--force-with-lease` after rebase, normal push after merge commit).
+
+**Final freshness check before posting any PR/Telegram summary:** re-fetch the
+base and PR head immediately before the comment. If `origin/$BASE_REF` or
+`origin/$HEAD_REF` moved, rerun `merge-tree`, gate classification, and any summary
+text derived from them. Never write simply "PR is mergeable". Write the scoped
+fact instead, for example: `clean against origin/main@<base_sha>` plus GitHub's
+current `mergeStateStatus`/`mergeable` values. If the final fetch fails, mark the
+run `[blocked]` rather than posting stale readiness.
+
 ## Workflow: issue_triage_and_fix
 
 When `CODECLAW_EVENT.workflow` is `issue_triage_and_fix`:
@@ -621,23 +674,26 @@ When `CODECLAW_EVENT.workflow` is `issue_triage_and_fix`:
 
 When `CODECLAW_EVENT.workflow` is `own_pr_self_review`:
 
-1. Inspect current PR state before editing:
-   ```bash
-   gh pr view "$PR_NUM" --repo "$ORG/$REPO" \
-     --json mergeStateStatus,mergeable,headRefName,baseRefName,isDraft
-   ```
-2. Checkout the writable PR branch for the PR authored by `self_login`.
-3. If `mergeStateStatus=DIRTY` or `mergeable=CONFLICTING`, resolve conflicts before normal self-review:
-   - Fetch the latest base branch and PR branch.
+1. Run the mandatory write-mode PR state preflight above before editing or
+   summarizing. This includes fetching base/head, checking out the writable PR
+   branch, hard-resetting it to `origin/$HEAD_REF`, recording `BASE_SHA` and
+   `HEAD_SHA`, and running `git merge-tree` against the fetched base.
+2. If the preflight reports a conflict, resolve conflicts before normal
+   self-review:
    - Prefer rebasing the PR branch onto the latest base unless the repo clearly requires merge commits.
    - Resolve conflicts in the worktree.
    - Run focused tests/checks for the conflicted areas.
    - Commit conflict-resolution changes when the resolution changes files.
    - Push with `git push --force-with-lease` after a rebase, or normal `git push` after a merge commit.
-   - Comment concisely with what was resolved and what validation ran.
-4. Run the same semantic review lenses used for external reviews.
-5. If findings exist, fix them inline, add/update tests where relevant, commit, push, and comment a concise self-review summary.
-6. Check PR gates with `gh pr checks <number> --repo <owner>/<repo>`. Use PR gates for follow-up fixes when checks fail: address actionable failures with commits/pushes and re-check.
+   - Comment concisely with what was resolved, the base SHA used, and what validation ran.
+3. Run the same semantic review lenses used for external reviews.
+4. If findings exist, fix them inline, add/update tests where relevant, commit, push, and comment a concise self-review summary.
+5. Check PR gates with `gh pr checks <number> --repo <owner>/<repo>`. Use PR gates for follow-up fixes when checks fail: address actionable failures with commits/pushes and re-check. A self-review or gate follow-up is **not complete** until every current-head failing/cancelled/pending required check is classified as one of: `actionable-fixed`, `actionable-blocked`, `infra/non-actionable`, `expected-neutral`, or `pending-watch`.
+6. Immediately before posting any PR or Telegram summary, repeat the final
+   freshness check from the preflight. If base/head moved, recompute merge state
+   and gate classification first. Summaries must say `clean against
+   origin/<base>@<base_sha>` or `conflicting against origin/<base>@<base_sha>`,
+   never unqualified `mergeable`.
 7. Mark draft PRs ready after self-review passes; do not wait for PR gates. If `is_draft` is true and no self-review findings remain, run `gh pr ready` and comment that CodeClaw self-review passed. Pending gates or external/non-actionable failures do not block publishing; later cron follow-ups handle real failures.
 8. Never post a GitHub review on own PRs.
 
@@ -652,16 +708,39 @@ and re-check gates. If gates are pending, do not churn; note that CodeClaw is wa
 Mark draft PRs ready after self-review passes; do not wait for PR gates. If a gate is
 unrelated/infrastructure-only, comment with evidence and keep monitoring.
 
+**Gate follow-up contract (mandatory):**
+
+1. Always query the current head SHA first, then inspect checks for that exact SHA:
+   ```bash
+   HEAD_SHA=$(gh pr view "$PR_NUM" --repo "$ORG/$REPO" --json headRefOid --jq .headRefOid)
+   gh pr checks "$PR_NUM" --repo "$ORG/$REPO"
+   gh api "repos/$ORG/$REPO/commits/$HEAD_SHA/check-runs?per_page=100"
+   ```
+2. Treat `failure`, `startup_failure`, `timed_out`, `cancelled`, and required-check `pending/in_progress` as live gate work until classified. Do **not** summarize a gate follow-up as `PASS` while any required current-head check is failing/cancelled unless the summary explicitly says `BLOCKED (infra/non-actionable)` or `WAITING` and lists the unresolved checks.
+3. For each failing/cancelled check, inspect the deepest available evidence: check annotations, `details_url`, Azure/ADO timeline/log URL, rerun attempt/build id, and child jobs. Do not stop at `mergeable=MERGEABLE`; mergeability only means no git conflict.
+4. If logs/annotations point to source-controlled code, tests, packaging, path filters, or pipeline YAML, reproduce locally where possible, patch, commit, push, and re-check.
+5. If logs/annotations point to infrastructure or rerun-only failures (for example duplicate artifact publish on a rerun such as `Artifact drop_* already exists for build ...`, missing external log access, hosted-pool capacity, or proof-of-presence checks), do not invent a code patch. Comment with exact receipts, mark the gate `infra/non-actionable`, and keep monitoring for a fresh run.
+6. On repeated gate ticks for the same head, compare the **latest run/build id and failing check set** with the previous posted comment. If the failing set changed, post a new concise update even if the head SHA did not change. If unchanged, avoid duplicate comments but still record the check.
+7. Telegram/PR summaries must include: head SHA, latest run/build id, failing checks, classification, local validations run, whether a code fix was pushed, and next action (`fixed`, `blocked on infra`, or `waiting for fresh run`).
+
 ## Workflow: own_pr_comment_response
 
 When `CODECLAW_EVENT.workflow` is `own_pr_comment_response`:
 
 1. Treat `FEEDBACK_BATCH` as all new non-self feedback for one own PR in this cron tick.
-2. Checkout the writable PR branch.
+2. Run the mandatory write-mode PR state preflight above before editing or
+   summarizing. If the PR is conflicting, resolve the conflict first or post a
+   scoped blocked/conflict summary; do not process feedback as if the head were
+   merge-ready.
 3. Address related feedback together with code/docs/tests as needed.
 4. Commit and push one coherent change set when possible.
 5. Reply to individual threads/comments when possible; otherwise post one PR summary. If feedback requires clarification, ask instead of guessing.
-6. Never post a GitHub review on own PRs.
+6. Immediately before posting any PR or Telegram summary, repeat the final
+   freshness check from the preflight. If base/head moved, recompute merge state
+   and gate classification first. Summaries must say `clean against
+   origin/<base>@<base_sha>` or `conflicting against origin/<base>@<base_sha>`,
+   never unqualified `mergeable`.
+7. Never post a GitHub review on own PRs.
 
 ## Memory & learnings
 
