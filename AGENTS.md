@@ -44,7 +44,7 @@ Applies to:
 
 Rules:
 
-⚠️ CRITICAL — TELEGRAM NOTIFICATION: You are running as a subagent. The auto-announce mechanism DOES NOT WORK. You MUST call the `message` tool at the end of every workflow to post your summary to Telegram group `-1003898998425:topic:1`. If you skip this step, your work is invisible.
+⚠️ CRITICAL — TELEGRAM NOTIFICATION: You are running as a subagent. The auto-announce mechanism DOES NOT WORK. For write-mode workflows, call the `message` tool at the end only when the run changed external state, found/reporting a blocker, resolved a conflict, pushed a commit, posted/replied on GitHub, or needs human attention. If the mandatory duplicate-action guard determines the tick is already handled / approval-only / unchanged pending-watch, exit quietly after logging to memory: no PR comment, no Telegram digest, no "still clean" update.
 
 - Use a writable worktree/branch, not the detached read-only review worktree.
 - Use TDD for bug fixes: write the failing test, watch it fail for the expected reason, implement the minimal fix, then verify it passes.
@@ -705,7 +705,10 @@ Non-actionable deltas that must **not** cause a PR summary by themselves:
 - CodeClaw's own new comments, reviews, or commits.
 
 If no actionable trigger remains after this filtering, skip cleanly and post no
-PR summary and no Telegram digest for this tick:
+PR summary and no Telegram digest for this tick. This is a hard noise-control
+rule: do not perform a full validation sweep just to justify a no-op; run only
+the minimum freshness checks needed to prove the trigger is unchanged, append a
+memory note if useful, then exit.
 
 ```bash
 echo "Already handled PR #$PR_NUM at head $HEAD_SHA with unchanged actionable feedback/gates/base; skipping."
@@ -715,7 +718,10 @@ exit 0
 If anything changed, proceed, but the new summary/comment must explain the new
 actionable trigger (`new head needing review`, `new non-self change request`,
 `gate failure changed`, `base moved and merge state changed`, `draft-state
-changed`, etc.).
+changed`, etc.). A new head created by CodeClaw immediately after a just-posted
+fix is not, by itself, a reason for another top-level self-review comment while
+checks are still pending; record it as `pending-watch` unless a new actionable
+failure or blocker appears.
 
 Every own-PR PR comment or Telegram digest must include a compact machine-readable
 marker so future runs can make this decision reliably:
@@ -726,9 +732,11 @@ marker so future runs can make this decision reliably:
 
 The visible text should still be human-readable; the marker is for dedupe only
 and must not contain secrets or raw logs. Do not post a PR comment whose only
-purpose is to say "no new code changes" or "rechecked and still clean"; the
-marker/daily log/Telegram digest is enough unless there is a new blocker,
-source change, conflict resolution, or human-requested answer.
+purpose is to say "no new code changes", "pending-watch", "approval-only", or
+"rechecked and still clean". For unchanged/no-op states, the existing marker and
+daily log are enough; do not send a Telegram digest either unless there is a new
+blocker, source change, conflict resolution, external-state change, or
+human-requested answer.
 
 ## Workflow: issue_triage_and_fix
 
@@ -760,7 +768,7 @@ When `CODECLAW_EVENT.workflow` is `own_pr_self_review`:
    - Push with `git push --force-with-lease` after a rebase, or normal `git push` after a merge commit.
    - Comment concisely with what was resolved, the base SHA used, and what validation ran.
 4. Run the same semantic review lenses used for external reviews.
-5. If findings exist, fix them inline, add/update tests where relevant, commit, push, and comment a concise self-review summary.
+5. If findings exist, fix them inline, add/update tests where relevant, commit, push, and comment a concise self-review summary. Do not create a commit for speculative cleanup, approval-only feedback, or a "likely" CI cause without a concrete source receipt (compiler/clippy/test log, reproducible local failure, or static proof such as an actual unresolved reference/import path). If local execution is blocked by private credentials, run the narrowest static/source checks that prove the patch cannot introduce the inverse failure before pushing.
 6. Check PR gates with `gh pr checks <number> --repo <owner>/<repo>`. Use PR gates for follow-up fixes when checks fail: address actionable failures with commits/pushes and re-check. A self-review or gate follow-up is **not complete** until every current-head failing/cancelled/pending required check is classified as one of: `actionable-fixed`, `actionable-blocked`, `infra/non-actionable`, `expected-neutral`, or `pending-watch`.
 7. Immediately before posting any PR or Telegram summary, repeat the final
    freshness check from the preflight. If base/head moved, recompute merge state
@@ -791,10 +799,10 @@ unrelated/infrastructure-only, comment with evidence and keep monitoring.
    ```
 2. Treat `failure`, `startup_failure`, `timed_out`, `cancelled`, and required-check `pending/in_progress` as live gate work until classified. Do **not** summarize a gate follow-up as `PASS` while any required current-head check is failing/cancelled unless the summary explicitly says `BLOCKED (infra/non-actionable)` or `WAITING` and lists the unresolved checks.
 3. For each failing/cancelled check, inspect the deepest available evidence: check annotations, `details_url`, Azure/ADO timeline/log URL, rerun attempt/build id, and child jobs. Do not stop at `mergeable=MERGEABLE`; mergeability only means no git conflict.
-4. If logs/annotations point to source-controlled code, tests, packaging, path filters, or pipeline YAML, reproduce locally where possible, patch, commit, push, and re-check.
+4. If logs/annotations point to source-controlled code, tests, packaging, path filters, or pipeline YAML, reproduce locally where possible, patch, commit, push, and re-check. For opaque/generic annotations (for example only `Bash exited with code 101`), do not push a fix merely because it is plausible; first find a source-level receipt and run a targeted static check/grep that would have caught the old failure and does not create the opposite failure.
 5. If logs/annotations point to infrastructure or rerun-only failures (for example duplicate artifact publish on a rerun such as `Artifact drop_* already exists for build ...`, missing external log access, hosted-pool capacity, or proof-of-presence checks), do not invent a code patch. Comment with exact receipts, mark the gate `infra/non-actionable`, and keep monitoring for a fresh run.
-6. On repeated gate ticks for the same head, compare the **latest run/build id and failing check set** with the previous CodeClaw marker/comment. If the failing set changed and the new state requires a code fix or a new blocker/infra classification, post one concise update. If the head/run/failing set is unchanged, or the only change is pending/in-progress checks after a CodeClaw push, do not post another PR comment; just record the check locally.
-7. Telegram/PR summaries that are actually posted must include: head SHA, latest run/build id, failing checks, classification, local validations run, whether a code fix was pushed, and next action (`fixed`, `blocked on infra`, or `waiting for fresh run`). Do not post PR summaries for no-op gate watches.
+6. On repeated gate ticks for the same head, compare the **latest run/build id and failing check set** with the previous CodeClaw marker/comment. If the failing set changed and the new state requires a code fix or a new blocker/infra classification, post one concise update. If the head/run/failing set is unchanged, or the only change is pending/in-progress checks after a CodeClaw push, do not post another PR comment and do not send a Telegram digest; just record the check locally.
+7. Telegram/PR summaries that are actually posted must include: head SHA, latest run/build id, failing checks, classification, local validations run, whether a code fix was pushed, and next action (`fixed`, `blocked on infra`, or `waiting for fresh run`). Do not post PR summaries or Telegram digests for no-op gate watches / pending-watch ticks.
 
 ## Workflow: own_pr_comment_response
 
@@ -809,7 +817,7 @@ When `CODECLAW_EVENT.workflow` is `own_pr_comment_response`:
    this head/base/feedback/gate state, exit cleanly without posting duplicate
    comments or Telegram summaries.
 4. Address related actionable feedback together with code/docs/tests as needed.
-5. Commit and push one coherent change set when possible.
+5. Commit and push one coherent change set when possible. Do not split a feedback batch into multiple small churn commits unless a fresh, distinct actionable blocker appears after the first push; approval-only/no-op batches require no commit.
 6. Reply to individual threads/comments when possible. Post a top-level PR summary
    only when a commit was pushed, a blocker/conflict is being reported, or a
    human-requested answer cannot be delivered inline. If the filtered delta is
