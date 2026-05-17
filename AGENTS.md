@@ -721,7 +721,11 @@ actionable trigger (`new head needing review`, `new non-self change request`,
 changed`, etc.). A new head created by CodeClaw immediately after a just-posted
 fix is not, by itself, a reason for another top-level self-review comment while
 checks are still pending; record it as `pending-watch` unless a new actionable
-failure or blocker appears.
+failure or blocker appears. If the newest own-PR action marker already documents
+the CodeClaw-authored push, and the only current delta is approval/no-comment
+feedback or pending/in-progress checks for that new head, `own_pr_self_review`
+must exit after the minimum freshness/gate-signature check: no broad validation
+sweep, no PR comment, and no Telegram digest.
 
 Every own-PR PR comment or Telegram digest must include a compact machine-readable
 marker so future runs can make this decision reliably:
@@ -799,7 +803,7 @@ unrelated/infrastructure-only, comment with evidence and keep monitoring.
    ```
 2. Treat `failure`, `startup_failure`, `timed_out`, `cancelled`, and required-check `pending/in_progress` as live gate work until classified. Do **not** summarize a gate follow-up as `PASS` while any required current-head check is failing/cancelled unless the summary explicitly says `BLOCKED (infra/non-actionable)` or `WAITING` and lists the unresolved checks.
 3. For each failing/cancelled check, inspect the deepest available evidence: check annotations, `details_url`, Azure/ADO timeline/log URL, rerun attempt/build id, and child jobs. Do not stop at `mergeable=MERGEABLE`; mergeability only means no git conflict.
-4. If logs/annotations point to source-controlled code, tests, packaging, path filters, or pipeline YAML, reproduce locally where possible, patch, commit, push, and re-check. For opaque/generic annotations (for example only `Bash exited with code 101`), do not push a fix merely because it is plausible; first find a source-level receipt and run a targeted static check/grep that would have caught the old failure and does not create the opposite failure.
+4. If logs/annotations point to source-controlled code, tests, packaging, path filters, or pipeline YAML, reproduce locally where possible, patch, commit, push, and re-check. For opaque/generic annotations (for example only `Bash exited with code 101`), do not push a fix merely because it is plausible; first find a source-level receipt and run a targeted static check/grep that would have caught the old failure and does not create the opposite failure. Temporal correlation with the latest changed test/code shape is not a source receipt. If the same opaque failing check persists after one source-receipted fix attempt and local execution remains blocked by private credentials, stop patching and report/classify as `actionable-blocked` or `infra/non-actionable` until a new log, compiler/clippy/test message, or reviewer comment names the exact source issue.
 5. If logs/annotations point to infrastructure or rerun-only failures (for example duplicate artifact publish on a rerun such as `Artifact drop_* already exists for build ...`, missing external log access, hosted-pool capacity, or proof-of-presence checks), do not invent a code patch. Comment with exact receipts, mark the gate `infra/non-actionable`, and keep monitoring for a fresh run.
 6. On repeated gate ticks for the same head, compare the **latest run/build id and failing check set** with the previous CodeClaw marker/comment. If the failing set changed and the new state requires a code fix or a new blocker/infra classification, post one concise update. If the head/run/failing set is unchanged, or the only change is pending/in-progress checks after a CodeClaw push, do not post another PR comment and do not send a Telegram digest; just record the check locally.
 7. Telegram/PR summaries that are actually posted must include: head SHA, latest run/build id, failing checks, classification, local validations run, whether a code fix was pushed, and next action (`fixed`, `blocked on infra`, or `waiting for fresh run`). Do not post PR summaries or Telegram digests for no-op gate watches / pending-watch ticks.
