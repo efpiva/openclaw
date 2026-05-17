@@ -217,8 +217,8 @@ This is the deterministic model-bound layer stack OpenClaw can snapshot for the 
     "roughTokens": 140
   },
   "dynamicToolsJson": {
-    "chars": 40216,
-    "roughTokens": 10054
+    "chars": 43188,
+    "roughTokens": 10797
   },
   "openClawDeveloperInstructions": {
     "chars": 4412,
@@ -229,8 +229,8 @@ This is the deterministic model-bound layer stack OpenClaw can snapshot for the 
     "roughTokens": 6748
   },
   "totalWithDynamicToolsJson": {
-    "chars": 67210,
-    "roughTokens": 16803
+    "chars": 70182,
+    "roughTokens": 17546
   },
   "userInputText": {
     "chars": 370,
@@ -568,7 +568,7 @@ Full JSON: `codex-dynamic-tools.telegram-direct.json`
 ```json
 [
   {
-    "description": "Send/delete/manage channel messages. Supports actions: send.",
+    "description": "Send, delete, and manage messages via channel plugins. Supports actions: send.",
     "inputSchema": {
       "properties": {
         "accountId": {
@@ -579,54 +579,17 @@ Full JSON: `codex-dynamic-tools.telegram-direct.json`
           "type": "string"
         },
         "asDocument": {
-          "description": "Alias for forceDocument.",
+          "description": "Send image/GIF as document to avoid Telegram compression. Alias for forceDocument (Telegram only).",
           "type": "boolean"
         },
         "asVoice": {
           "type": "boolean"
         },
-        "attachments": {
-          "description": "Structured attachments; each needs media/mediaUrl/path/filePath/fileUrl/url.",
-          "items": {
-            "properties": {
-              "filePath": {
-                "type": "string"
-              },
-              "fileUrl": {
-                "type": "string"
-              },
-              "media": {
-                "type": "string"
-              },
-              "mediaUrl": {
-                "type": "string"
-              },
-              "mimeType": {
-                "type": "string"
-              },
-              "name": {
-                "type": "string"
-              },
-              "path": {
-                "type": "string"
-              },
-              "type": {
-                "enum": ["image", "audio", "video", "file"],
-                "type": "string"
-              },
-              "url": {
-                "type": "string"
-              }
-            },
-            "type": "object"
-          },
-          "type": "array"
-        },
         "bestEffort": {
           "type": "boolean"
         },
         "buffer": {
-          "description": "Base64 attachment payload; data URL ok.",
+          "description": "Base64 payload for attachments (optionally a data: URL).",
           "type": "string"
         },
         "caption": {
@@ -642,11 +605,11 @@ Full JSON: `codex-dynamic-tools.telegram-direct.json`
           "type": "boolean"
         },
         "effect": {
-          "description": "Alias for effectId.",
+          "description": "Alias for effectId (e.g., invisible-ink, balloons).",
           "type": "string"
         },
         "effectId": {
-          "description": "Effect id/name for sendWithEffect.",
+          "description": "Message effect name/id for sendWithEffect (e.g., invisible ink).",
           "type": "string"
         },
         "filename": {
@@ -656,7 +619,7 @@ Full JSON: `codex-dynamic-tools.telegram-direct.json`
           "type": "string"
         },
         "forceDocument": {
-          "description": "Send image/GIF/video as document; avoids compression.",
+          "description": "Send image/GIF as document to avoid Telegram compression (Telegram only).",
           "type": "boolean"
         },
         "gatewayToken": {
@@ -669,7 +632,7 @@ Full JSON: `codex-dynamic-tools.telegram-direct.json`
           "type": "boolean"
         },
         "media": {
-          "description": "Media URL/path. data: use buffer.",
+          "description": "Media URL or local path. data: URLs are not supported here, use buffer.",
           "type": "string"
         },
         "message": {
@@ -682,7 +645,7 @@ Full JSON: `codex-dynamic-tools.telegram-direct.json`
           "type": "string"
         },
         "quoteText": {
-          "description": "Telegram reply quote text.",
+          "description": "Quote text for Telegram reply_parameters",
           "type": "string"
         },
         "replyTo": {
