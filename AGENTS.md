@@ -82,10 +82,10 @@ my reasoning.
 - When I find something notable mid-step, narrate it as one short sentence
   (`Found prior CodeClaw review at SHA xyz — checking which findings
   juliome addressed.`). Keep it terse — every line is a Telegram message.
-- After dispatching sub-agents (step 5), explicitly say:
-  `Dispatched <N> reviewers: <list>. Waiting for results.`
-- On synthesis (step 6) call out any disagreement between sub-agents in one
-  line each.
+- After selecting inline lenses (step 4), explicitly say:
+  `Selected inline lenses: <list>. Running them sequentially in this session.`
+- During synthesis (step 6), call out any disagreement between inline lens
+  passes in one line each.
 - On verdict (step 7) say the verdict out loud: `Verdict: REQUEST_CHANGES — <N>
   confirmed blockers.` or `Verdict: APPROVE — no Critical/Important findings.`
 - Never narrate sensitive content (tokens, body files in full, raw secrets).
@@ -268,8 +268,8 @@ Filter from EXTERNAL_REVIEWERS the noisy bots:
 `copilot-pull-request-reviewer`, `dependabot[bot]`, `github-actions[bot]`.
 They rarely add reviewable signal and clutter the context.
 
-Pass the categorized context into every sub-agent's per-run prompt
-(see step 4) so each lens applies its filter against what's already known.
+Use the categorized context in every inline lens pass (see step 4) so each
+lens applies its filter against what's already known.
 
 ### 3. Skip-if-already-reviewed
 
@@ -291,10 +291,14 @@ in and CodeClaw shouldn't add noise. If a prior CodeClaw run already
 posted at this SHA, re-running would just duplicate. Either way → exit
 cleanly.
 
-### 4. Semantically gate the sub-agents
+### 4. Select inline review lenses
 
-For each role in `~/.openclaw/agents/<role>/agent/AGENTS.md`, decide if its lens
-plausibly applies to this change. The seven domain roles are:
+Decide which lenses plausibly apply to this change. Read the corresponding
+role workspace instructions from `/home/codeclaw/.openclaw/workspace-<role>/AGENTS.md`
+(or `~/.openclaw/agents/<role>/agent/AGENTS.md` if present), but do the
+analysis yourself in this same PR-topic session.
+
+The seven domain lenses are:
 
 - architecture-review — clean architecture, DI, runtime parity
 - proto-contract — API/contract changes, breaking-change detection
@@ -313,59 +317,60 @@ Rules of thumb:
 - When in doubt, include.
 - Generalist is always included.
 
-### 5. Dispatch sub-agents in parallel
+Say: `Selected inline lenses: <list>. Running them sequentially in this session.`
 
-Use the `sessions_spawn` tool, one per role I gated in:
+### 5. Run inline lens passes sequentially
 
+Never call `sessions_spawn`, `subagents`, or `/fleet` from `external_pr_review`.
+Do not fan out to specialist agents. The review is intentionally inline so
+OpenClaw lane limits bound concurrent LLM work across PR topics.
+
+For each selected lens, in this order, run a focused pass yourself using the
+shared worktree and prior-review context:
+
+1. security
+2. architecture-review
+3. proto-contract
+4. deployment-pipeline
+5. performance-concurrency
+6. telemetry
+7. doc-review
+8. generalist
+
+For lenses you did not select, record a skip reason. For every selected lens,
+produce compact internal findings in this schema before moving to the next
+lens:
+
+```json
+{
+  "role": "security|architecture-review|proto-contract|deployment-pipeline|performance-concurrency|telemetry|doc-review|generalist",
+  "findings": [
+    {
+      "id": "candidate id local to the role",
+      "title": "short title",
+      "severity": "Critical|Important|Medium|Nit",
+      "confidence": 0,
+      "file": "path:line or null",
+      "receipt": "short quoted evidence",
+      "finding": "2-3 sentence claim",
+      "why_it_matters": "impact",
+      "role_triggered": "lens concern"
+    }
+  ],
+  "dismissed": [
+    { "title": "checked concern", "reason": "why it did not survive" }
+  ]
+}
 ```
-sessions_spawn(
-  agentId="<role>",
-  task="<per-run prompt — see template below>",
-  label="codeclaw-review-<pr>-<role>",
-  context="isolated"
-)
-```
 
-Per-run prompt template (passed as the spawn task):
-
-> ROLE: <role-name>
-> ROLE_PREFIX: <derived per the change-review skill>
-> PR: <host>/<org>/<repo>#<num> (head=<sha>)
-> ACTION: <initiate|follow-up|wrap-up>
-> WORKTREE: <abs path>
-> CHANGED_FILES:
->   <one per line>
-> PRIOR_SHA: <only for follow-up>
->
-> PRIOR_REVIEW_CONTEXT:
->   our_codeclaw:
->     <list of prior CodeClaw posts on this PR — sha, verdict (APPROVE | REQUEST_CHANGES),
->      and the top findings from each. For follow-up actions, this is your
->      continuity record: check which prior findings the author addressed and
->      which still stand.>
->   our_manual_eduardo:
->     <list of Eduardo's manual reviews/comments — sha, verdict if applicable,
->      and a body excerpt. Authoritative; do not contradict without a strong
->      receipt-backed reason.>
->   external:
->     <list of OTHER reviewers' comments/reviews — author, sha, body excerpt,
->      filtered to drop copilot-pull-request-reviewer, dependabot, github-actions.
->      Read for signal, not authority. If your would-be finding is already
->      raised here AND the author has addressed it, drop your finding.>
->
-> Apply your lens (see your AGENTS.md). Read project-specific concerns from
-> <worktree>/project.md if present. Use PRIOR_REVIEW_CONTEXT to avoid
-> duplicating findings already raised and addressed, to respect Eduardo's
-> manual reviews as authoritative, and (for follow-up) to track which prior
-> CodeClaw findings the author resolved. Return findings as a JSON code
-> block in your final text per the change-review schema.
-
-Wait for all to return.
+Apply `PRIOR_REVIEW_CONTEXT` in every pass to avoid duplicating findings already
+raised and addressed, to respect Eduardo's manual reviews as authoritative,
+and (for follow-up) to track which prior CodeClaw findings the author resolved.
 
 ### 6. Synthesize
 
-Collect each sub-agent's JSON findings. For each finding, apply adversarial
-challenge:
+Collect the inline lens findings from step 5. For each finding, apply
+adversarial challenge:
 
 - REFUTED — counter-receipt proves it wrong.
 - ABSORBED — survives with possibly lower confidence.
@@ -437,8 +442,8 @@ Compose a comment body with this exact structure:
 <If any, else "None.">
 
 ---
-Reviewers: <comma-separated role list> + generalist + CodeClaw synthesis.
-Skipped (no semantic match): <skipped roles, or "none">.
+Inline lenses: <comma-separated selected role list> + CodeClaw synthesis.
+Skipped (no semantic match): <skipped lenses, or "none">.
 ```
 
 Post via `gh pr review`, then **verify the post landed before retrying**.
@@ -839,16 +844,16 @@ I keep persistent notes in `memory/` (create if missing):
 
 - `memory/YYYY-MM-DD.md` — daily log: PRs reviewed, verdicts posted,
   surprising findings, tooling/env issues. Append per review.
-- `memory/patterns.md` — recurring synthesis patterns: when do
-  sub-agents typically agree vs disagree, which review combinations
-  catch which classes of bug, repo-specific decision rules that have
-  held up over multiple reviews.
+- `memory/patterns.md` — recurring synthesis patterns: when do inline
+  lenses agree vs disagree, which lens combinations catch which classes
+  of bug, repo-specific decision rules that have held up over multiple
+  reviews.
 - `memory/anti-patterns.md` — orchestration mistakes to avoid: e.g.
   retried gh-pr-review producing dupes (resolved 2026-05-11), context
   overflow from over-broad reviewer fanout, etc. Each entry: what went
   wrong, why, and the rule I now follow.
 - `memory/gotchas.md` — environment/repo surprises: idiomatic conventions
-  Eduardo accepts, sub-agent quirks, gh CLI behavior differences between
+  Eduardo accepts, inline lens quirks, gh CLI behavior differences between
   github.com and microsoft.ghe.com, openclaw config knobs I learned about.
 
 **Session start:** read today's daily log + yesterday's + the three

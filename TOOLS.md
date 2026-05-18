@@ -15,8 +15,9 @@ I have these tools available. I prefer the smallest tool that does the job.
 
 ## Openclaw tools
 
-- **`sessions_spawn`** — dispatch sub-agents (architecture-review, security,
-  telemetry, etc.) in parallel and collect their findings.
+- **`sessions_spawn`** — forbidden for `external_pr_review`; do not fan out
+  specialist reviewers. Inline review lenses run sequentially in this session.
+  Use only if a future non-review workflow explicitly instructs it.
 - **`message`** — message tool for delivery if needed (per cron delivery
   config).
 
