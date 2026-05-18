@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "../../config/sessions.js";
 import {
   adoptCronRunSessionMetadata,
+  applyCronDeliveryRouteToSessionEntry,
   createPersistCronSessionEntry,
   type MutableCronSession,
 } from "./run-session-state.js";
@@ -29,6 +30,35 @@ function makeCronSession(entry = makeSessionEntry()): MutableCronSession {
     previousSessionId: undefined,
   } as MutableCronSession;
 }
+
+describe("applyCronDeliveryRouteToSessionEntry", () => {
+  it("stores explicit Telegram thread delivery on cron session entries for live channel mirroring", () => {
+    const entry = makeSessionEntry();
+
+    applyCronDeliveryRouteToSessionEntry({
+      entry,
+      resolvedDelivery: {
+        ok: true,
+        channel: "telegram",
+        to: "-100",
+        accountId: "default",
+        threadId: 1189,
+      },
+    });
+
+    expect(entry.channel).toBe("telegram");
+    expect(entry.lastChannel).toBe("telegram");
+    expect(entry.lastTo).toBe("-100");
+    expect(entry.lastAccountId).toBe("default");
+    expect(entry.lastThreadId).toBe("1189");
+    expect(entry.deliveryContext).toEqual({
+      channel: "telegram",
+      to: "-100",
+      accountId: "default",
+      threadId: "1189",
+    });
+  });
+});
 
 describe("createPersistCronSessionEntry", () => {
   it("persists isolated cron state only under the stable cron session key", async () => {
