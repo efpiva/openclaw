@@ -1,11 +1,36 @@
 import { createExpiringMapCache, isCacheEnabled, resolveCacheTtlMs } from "../cache-utils.js";
 import type { SessionEntry } from "./types.js";
 
+export type DeepReadonly<T> = T extends (...args: never[]) => unknown
+  ? T
+  : T extends readonly (infer U)[]
+    ? ReadonlyArray<DeepReadonly<U>>
+    : T extends object
+      ? { readonly [K in keyof T]: DeepReadonly<T[K]> }
+      : T;
+
+export type SessionStoreSnapshot = DeepReadonly<Record<string, SessionEntry>>;
+
+export type SessionStoreSnapshotEntry = DeepReadonly<SessionEntry>;
+
+export type SessionStoreSnapshotEntries = ReadonlyArray<
+  readonly [string, SessionStoreSnapshotEntry]
+>;
+
 type SessionStoreCacheEntry = {
   store: Record<string, SessionEntry>;
   mtimeMs?: number;
   sizeBytes?: number;
   serialized?: string;
+};
+
+type SessionStoreSnapshotCacheEntry = {
+  snapshot: SessionStoreSnapshot;
+  mtimeMs?: number;
+  sizeBytes?: number;
+  generation: number;
+  createdAt: number;
+  entryCount: number;
 };
 
 const DEFAULT_SESSION_STORE_TTL_MS = 45_000; // 45 seconds (between 30-60s)
@@ -15,6 +40,11 @@ const LARGE_SESSION_STORE_STRING_MAX_INTERNED = 256;
 const SESSION_STORE_CACHE = createExpiringMapCache<string, SessionStoreCacheEntry>({
   ttlMs: getSessionStoreTtl,
 });
+const SESSION_STORE_SNAPSHOT_CACHE = createExpiringMapCache<string, SessionStoreSnapshotCacheEntry>(
+  {
+    ttlMs: getSessionStoreTtl,
+  },
+);
 const SESSION_STORE_SERIALIZED_CACHE = new Map<string, string>();
 const SESSION_STORE_STRING_INTERN_POOL = new Map<string, string>();
 const SESSION_STORE_STRING_INTERN_STATS = {
@@ -23,6 +53,7 @@ const SESSION_STORE_STRING_INTERN_STATS = {
   skippedSmall: 0,
   skippedFull: 0,
 };
+let sessionStoreSnapshotGeneration = 0;
 
 function resetSessionStoreStringInternStats(): void {
   SESSION_STORE_STRING_INTERN_STATS.stored = 0;
@@ -86,6 +117,21 @@ export function getSessionStoreStringInternStatsForTest(): {
   };
 }
 
+function deepFreeze<T>(value: T, seen = new WeakSet<object>()): DeepReadonly<T> {
+  if (!value || typeof value !== "object") {
+    return value as DeepReadonly<T>;
+  }
+  const object = value as object;
+  if (seen.has(object)) {
+    return value as DeepReadonly<T>;
+  }
+  seen.add(object);
+  for (const child of Object.values(value as Record<string, unknown>)) {
+    deepFreeze(child, seen);
+  }
+  return Object.freeze(value) as DeepReadonly<T>;
+}
+
 export function cloneSessionStoreRecord(
   store: Record<string, SessionEntry>,
   serialized?: string,
@@ -93,6 +139,13 @@ export function cloneSessionStoreRecord(
   const cloned = JSON.parse(serialized ?? JSON.stringify(store)) as Record<string, SessionEntry>;
   internSessionStoreLargeStrings(cloned);
   return cloned;
+}
+
+export function cloneSessionStoreSnapshot(
+  store: Record<string, SessionEntry>,
+  serialized?: string,
+): SessionStoreSnapshot {
+  return deepFreeze(cloneSessionStoreRecord(store, serialized));
 }
 
 export function getSessionStoreTtl(): number {
@@ -108,6 +161,7 @@ export function isSessionStoreCacheEnabled(): boolean {
 
 export function clearSessionStoreCaches(): void {
   SESSION_STORE_CACHE.clear();
+  SESSION_STORE_SNAPSHOT_CACHE.clear();
   SESSION_STORE_SERIALIZED_CACHE.clear();
   SESSION_STORE_STRING_INTERN_POOL.clear();
   resetSessionStoreStringInternStats();
@@ -115,6 +169,7 @@ export function clearSessionStoreCaches(): void {
 
 export function invalidateSessionStoreCache(storePath: string): void {
   SESSION_STORE_CACHE.delete(storePath);
+  SESSION_STORE_SNAPSHOT_CACHE.delete(storePath);
   SESSION_STORE_SERIALIZED_CACHE.delete(storePath);
 }
 
@@ -132,6 +187,45 @@ export function setSerializedSessionStore(storePath: string, serialized?: string
 
 export function dropSessionStoreObjectCache(storePath: string): void {
   SESSION_STORE_CACHE.delete(storePath);
+}
+
+export function dropSessionStoreSnapshotCache(storePath: string): void {
+  SESSION_STORE_SNAPSHOT_CACHE.delete(storePath);
+}
+
+export function readSessionStoreSnapshotCache(params: {
+  storePath: string;
+  mtimeMs?: number;
+  sizeBytes?: number;
+}): SessionStoreSnapshot | null {
+  const cached = SESSION_STORE_SNAPSHOT_CACHE.get(params.storePath);
+  if (!cached) {
+    return null;
+  }
+  if (params.mtimeMs !== cached.mtimeMs || params.sizeBytes !== cached.sizeBytes) {
+    invalidateSessionStoreCache(params.storePath);
+    return null;
+  }
+  return cached.snapshot;
+}
+
+export function writeSessionStoreSnapshotCache(params: {
+  storePath: string;
+  store: Record<string, SessionEntry>;
+  mtimeMs?: number;
+  sizeBytes?: number;
+  serialized?: string;
+}): SessionStoreSnapshot {
+  const snapshot = cloneSessionStoreSnapshot(params.store, params.serialized);
+  SESSION_STORE_SNAPSHOT_CACHE.set(params.storePath, {
+    snapshot,
+    mtimeMs: params.mtimeMs,
+    sizeBytes: params.sizeBytes,
+    generation: (sessionStoreSnapshotGeneration += 1),
+    createdAt: Date.now(),
+    entryCount: Object.keys(snapshot).length,
+  });
+  return snapshot;
 }
 
 export function readSessionStoreCache(params: {

@@ -16,11 +16,13 @@ import { enforceSessionDiskBudget, type SessionDiskBudgetSweepResult } from "./d
 import { deriveSessionMetaPatch } from "./metadata.js";
 import {
   dropSessionStoreObjectCache,
+  dropSessionStoreSnapshotCache,
   getSerializedSessionStore,
   isSessionStoreCacheEnabled,
   setSerializedSessionStore,
   takeMutableSessionStoreCache,
   writeSessionStoreCache,
+  writeSessionStoreSnapshotCache,
 } from "./store-cache.js";
 import { normalizeStoreSessionKey, resolveSessionStoreEntry } from "./store-entry.js";
 import { loadSessionStore, normalizeSessionStore } from "./store-load.js";
@@ -49,7 +51,17 @@ export {
   getSessionStoreWriterQueueSizeForTest,
 } from "./store-writer-state.js";
 export { withSessionStoreWriterForTest } from "./store-writer.js";
-export { loadSessionStore } from "./store-load.js";
+export {
+  loadSessionStore,
+  readSessionEntries,
+  readSessionEntry,
+  readSessionStoreSnapshot,
+} from "./store-load.js";
+export type {
+  SessionStoreSnapshot,
+  SessionStoreSnapshotEntries,
+  SessionStoreSnapshotEntry,
+} from "./store-cache.js";
 export { normalizeStoreSessionKey, resolveSessionStoreEntry } from "./store-entry.js";
 
 const log = createSubsystemLogger("sessions/store");
@@ -142,9 +154,17 @@ function updateSessionStoreWriteCaches(params: {
   setSerializedSessionStore(params.storePath, params.serialized);
   if (!isSessionStoreCacheEnabled()) {
     dropSessionStoreObjectCache(params.storePath);
+    dropSessionStoreSnapshotCache(params.storePath);
     return;
   }
   writeSessionStoreCache({
+    storePath: params.storePath,
+    store: params.store,
+    mtimeMs: fileStat?.mtimeMs,
+    sizeBytes: fileStat?.sizeBytes,
+    serialized: params.serialized,
+  });
+  writeSessionStoreSnapshotCache({
     storePath: params.storePath,
     store: params.store,
     mtimeMs: fileStat?.mtimeMs,

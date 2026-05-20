@@ -11,13 +11,20 @@ import {
 import { getFileStatSnapshot } from "../cache-utils.js";
 import {
   cloneSessionStoreRecord,
+  cloneSessionStoreSnapshot,
   internSessionEntryLargeStrings,
   isSessionStoreCacheEnabled,
   readSessionStoreCache,
+  readSessionStoreSnapshotCache,
   setSerializedSessionStore,
   writeSessionStoreCache,
+  writeSessionStoreSnapshotCache,
+  type SessionStoreSnapshot,
+  type SessionStoreSnapshotEntries,
+  type SessionStoreSnapshotEntry,
 } from "./store-cache.js";
 import { normalizePersistedSessionEntryShape } from "./store-entry-shape.js";
+import { resolveSessionStoreEntry } from "./store-entry.js";
 import { collectSessionMaintenancePreserveKeys } from "./store-maintenance-preserve.js";
 import { resolveMaintenanceConfig } from "./store-maintenance-runtime.js";
 import {
@@ -447,4 +454,46 @@ export function loadSessionStore(
   }
 
   return opts.clone === false ? store : cloneSessionStoreRecord(store, serializedFromDisk);
+}
+
+export function readSessionStoreSnapshot(storePath: string): SessionStoreSnapshot {
+  const currentFileStat = getFileStatSnapshot(storePath);
+  if (isSessionStoreCacheEnabled()) {
+    const cached = readSessionStoreSnapshotCache({
+      storePath,
+      mtimeMs: currentFileStat?.mtimeMs,
+      sizeBytes: currentFileStat?.sizeBytes,
+    });
+    if (cached) {
+      return cached;
+    }
+  }
+
+  const store = loadSessionStore(storePath);
+  const fileStat = getFileStatSnapshot(storePath) ?? currentFileStat;
+  if (!isSessionStoreCacheEnabled()) {
+    return cloneSessionStoreSnapshot(store);
+  }
+  return writeSessionStoreSnapshotCache({
+    storePath,
+    store,
+    mtimeMs: fileStat?.mtimeMs,
+    sizeBytes: fileStat?.sizeBytes,
+  });
+}
+
+export function readSessionEntry(
+  storePath: string,
+  sessionKey: string,
+): SessionStoreSnapshotEntry | undefined {
+  const snapshot = readSessionStoreSnapshot(storePath);
+  const resolved = resolveSessionStoreEntry({
+    store: snapshot as Record<string, SessionEntry>,
+    sessionKey,
+  });
+  return resolved.existing as SessionStoreSnapshotEntry | undefined;
+}
+
+export function readSessionEntries(storePath: string): SessionStoreSnapshotEntries {
+  return Object.entries(readSessionStoreSnapshot(storePath)) as SessionStoreSnapshotEntries;
 }
