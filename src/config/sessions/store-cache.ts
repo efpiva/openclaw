@@ -33,7 +33,14 @@ type SessionStoreSnapshotCacheEntry = {
   entryCount: number;
 };
 
+type SerializedSessionStoreCacheEntry = {
+  serialized: string;
+  sizeBytes: number;
+};
+
 const DEFAULT_SESSION_STORE_TTL_MS = 45_000; // 45 seconds (between 30-60s)
+const DEFAULT_SESSION_STORE_SERIALIZED_CACHE_MAX_ENTRIES = 64;
+const DEFAULT_SESSION_STORE_SERIALIZED_CACHE_MAX_BYTES = 64 * 1024 * 1024;
 const LARGE_SESSION_STORE_STRING_MIN_CHARS = 512;
 const LARGE_SESSION_STORE_STRING_MAX_INTERNED = 256;
 
@@ -45,7 +52,7 @@ const SESSION_STORE_SNAPSHOT_CACHE = createExpiringMapCache<string, SessionStore
     ttlMs: getSessionStoreTtl,
   },
 );
-const SESSION_STORE_SERIALIZED_CACHE = new Map<string, string>();
+const SESSION_STORE_SERIALIZED_CACHE = new Map<string, SerializedSessionStoreCacheEntry>();
 const SESSION_STORE_STRING_INTERN_POOL = new Map<string, string>();
 const SESSION_STORE_STRING_INTERN_STATS = {
   stored: 0,
@@ -54,6 +61,27 @@ const SESSION_STORE_STRING_INTERN_STATS = {
   skippedFull: 0,
 };
 let sessionStoreSnapshotGeneration = 0;
+let sessionStoreSerializedCacheBytes = 0;
+
+function parseNonNegativeInteger(value: string | undefined): number | null {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const parsed = Number.parseInt(trimmed, 10);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function getSerializedSessionStoreCacheMaxBytes(): number {
+  return (
+    parseNonNegativeInteger(process.env.OPENCLAW_SESSION_SERIALIZED_CACHE_MAX_BYTES) ??
+    DEFAULT_SESSION_STORE_SERIALIZED_CACHE_MAX_BYTES
+  );
+}
+
+function getSerializedSessionStoreCacheMaxEntries(): number {
+  return DEFAULT_SESSION_STORE_SERIALIZED_CACHE_MAX_ENTRIES;
+}
 
 function resetSessionStoreStringInternStats(): void {
   SESSION_STORE_STRING_INTERN_STATS.stored = 0;
@@ -117,6 +145,21 @@ export function getSessionStoreStringInternStatsForTest(): {
   };
 }
 
+export function getSerializedSessionStoreCacheStatsForTest(): {
+  entries: number;
+  totalBytes: number;
+  maxEntries: number;
+  maxBytes: number;
+} {
+  pruneSerializedSessionStoreCache();
+  return {
+    entries: SESSION_STORE_SERIALIZED_CACHE.size,
+    totalBytes: sessionStoreSerializedCacheBytes,
+    maxEntries: getSerializedSessionStoreCacheMaxEntries(),
+    maxBytes: getSerializedSessionStoreCacheMaxBytes(),
+  };
+}
+
 function deepFreeze<T>(value: T, seen = new WeakSet<object>()): DeepReadonly<T> {
   if (!value || typeof value !== "object") {
     return value as DeepReadonly<T>;
@@ -163,6 +206,7 @@ export function clearSessionStoreCaches(): void {
   SESSION_STORE_CACHE.clear();
   SESSION_STORE_SNAPSHOT_CACHE.clear();
   SESSION_STORE_SERIALIZED_CACHE.clear();
+  sessionStoreSerializedCacheBytes = 0;
   SESSION_STORE_STRING_INTERN_POOL.clear();
   resetSessionStoreStringInternStats();
 }
@@ -170,19 +214,53 @@ export function clearSessionStoreCaches(): void {
 export function invalidateSessionStoreCache(storePath: string): void {
   SESSION_STORE_CACHE.delete(storePath);
   SESSION_STORE_SNAPSHOT_CACHE.delete(storePath);
+  deleteSerializedSessionStore(storePath);
+}
+
+function deleteSerializedSessionStore(storePath: string): void {
+  const cached = SESSION_STORE_SERIALIZED_CACHE.get(storePath);
+  if (!cached) {
+    return;
+  }
   SESSION_STORE_SERIALIZED_CACHE.delete(storePath);
+  sessionStoreSerializedCacheBytes -= cached.sizeBytes;
+}
+
+function pruneSerializedSessionStoreCache(): void {
+  const maxEntries = getSerializedSessionStoreCacheMaxEntries();
+  const maxBytes = getSerializedSessionStoreCacheMaxBytes();
+  while (
+    SESSION_STORE_SERIALIZED_CACHE.size > 0 &&
+    (SESSION_STORE_SERIALIZED_CACHE.size > maxEntries ||
+      sessionStoreSerializedCacheBytes > maxBytes)
+  ) {
+    const oldestKey = SESSION_STORE_SERIALIZED_CACHE.keys().next().value;
+    if (typeof oldestKey !== "string") {
+      break;
+    }
+    deleteSerializedSessionStore(oldestKey);
+  }
 }
 
 export function getSerializedSessionStore(storePath: string): string | undefined {
-  return SESSION_STORE_SERIALIZED_CACHE.get(storePath);
+  pruneSerializedSessionStoreCache();
+  return SESSION_STORE_SERIALIZED_CACHE.get(storePath)?.serialized;
 }
 
 export function setSerializedSessionStore(storePath: string, serialized?: string): void {
+  deleteSerializedSessionStore(storePath);
   if (serialized === undefined) {
-    SESSION_STORE_SERIALIZED_CACHE.delete(storePath);
     return;
   }
-  SESSION_STORE_SERIALIZED_CACHE.set(storePath, serialized);
+  const sizeBytes = Buffer.byteLength(serialized, "utf8");
+  const maxEntries = getSerializedSessionStoreCacheMaxEntries();
+  const maxBytes = getSerializedSessionStoreCacheMaxBytes();
+  if (maxEntries <= 0 || maxBytes <= 0 || sizeBytes > maxBytes) {
+    return;
+  }
+  SESSION_STORE_SERIALIZED_CACHE.set(storePath, { serialized, sizeBytes });
+  sessionStoreSerializedCacheBytes += sizeBytes;
+  pruneSerializedSessionStoreCache();
 }
 
 export function dropSessionStoreObjectCache(storePath: string): void {
@@ -283,7 +361,5 @@ export function writeSessionStoreCache(params: {
     sizeBytes: params.sizeBytes,
     serialized: params.serialized,
   });
-  if (params.serialized !== undefined) {
-    SESSION_STORE_SERIALIZED_CACHE.set(params.storePath, params.serialized);
-  }
+  setSerializedSessionStore(params.storePath, params.serialized);
 }

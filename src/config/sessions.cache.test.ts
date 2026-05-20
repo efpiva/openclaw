@@ -3,8 +3,11 @@ import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSuiteTempRootTracker } from "../test-helpers/temp-dir.js";
 import {
+  getSerializedSessionStore,
+  getSerializedSessionStoreCacheStatsForTest,
   getSessionStoreStringInternStatsForTest,
   readSessionStoreCache,
+  setSerializedSessionStore,
   writeSessionStoreCache,
 } from "./sessions/store-cache.js";
 import {
@@ -61,6 +64,35 @@ describe("Session Store Cache", () => {
   afterEach(() => {
     clearSessionStoreCacheForTest();
     delete process.env.OPENCLAW_SESSION_CACHE_TTL_MS;
+    delete process.env.OPENCLAW_SESSION_SERIALIZED_CACHE_MAX_BYTES;
+  });
+
+  it("bounds the serialized session store cache by total bytes", () => {
+    process.env.OPENCLAW_SESSION_SERIALIZED_CACHE_MAX_BYTES = "64";
+    clearSessionStoreCacheForTest();
+
+    setSerializedSessionStore("store:1", "a".repeat(40));
+    setSerializedSessionStore("store:2", "b".repeat(40));
+
+    expect(getSerializedSessionStore("store:1")).toBeUndefined();
+    expect(getSerializedSessionStore("store:2")).toBe("b".repeat(40));
+    expect(getSerializedSessionStoreCacheStatsForTest().entries).toBe(1);
+    expect(getSerializedSessionStoreCacheStatsForTest().totalBytes).toBe(40);
+  });
+
+  it("bounds the serialized session store cache by path count", () => {
+    const maxEntries = getSerializedSessionStoreCacheStatsForTest().maxEntries;
+
+    for (let index = 0; index < maxEntries + 2; index += 1) {
+      setSerializedSessionStore(`store:${index}`, `serialized:${index}`);
+    }
+
+    expect(getSerializedSessionStore("store:0")).toBeUndefined();
+    expect(getSerializedSessionStore("store:1")).toBeUndefined();
+    expect(getSerializedSessionStore(`store:${maxEntries + 1}`)).toBe(
+      `serialized:${maxEntries + 1}`,
+    );
+    expect(getSerializedSessionStoreCacheStatsForTest().entries).toBe(maxEntries);
   });
 
   it("should load session store from disk on first call", async () => {
