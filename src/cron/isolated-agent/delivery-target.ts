@@ -155,8 +155,10 @@ export async function resolveDeliveryTarget(
         deliveryContext: storedDeliveryContext,
       } satisfies SessionEntry)
     : undefined;
-  const threadEntry = threadSessionKey ? readSessionEntry(storePath, threadSessionKey) : undefined;
-  const mainEntry = readSessionEntry(storePath, mainSessionKey);
+  const threadEntry = threadSessionKey
+    ? (readSessionEntry(storePath, threadSessionKey) as SessionEntry | undefined)
+    : undefined;
+  const mainEntry = readSessionEntry(storePath, mainSessionKey) as SessionEntry | undefined;
   const main = storedDeliveryEntry ?? threadEntry ?? mainEntry;
 
   const preliminary = resolveSessionDeliveryTarget({

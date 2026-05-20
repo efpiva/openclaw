@@ -79,26 +79,31 @@ function resolveDeliveryStorePaths(cfg: OpenClawConfig, agentId: string): string
   return [...paths];
 }
 
+function asSessionEntry(entry: unknown): SessionEntry | undefined {
+  return entry as SessionEntry | undefined;
+}
+
 function findSessionEntryInStore(
-  store: ReturnType<typeof loadSessionStore>,
+  store: ReturnType<typeof readSessionStoreSnapshot>,
   keys: readonly string[],
 ) {
   let normalizedIndex: Map<string, SessionEntry> | undefined;
   let bestEntry: SessionEntry | undefined;
   let bestUpdatedAt = 0;
   let bestRoutable = false;
-  const acceptCandidate = (candidate: SessionEntry | undefined) => {
+  const acceptCandidate = (candidate: unknown) => {
     if (!candidate) {
       return;
     }
-    const candidateRoutable = hasRoutableDeliveryContext(deliveryContextFromSession(candidate));
-    const candidateUpdatedAt = candidate.updatedAt ?? 0;
+    const entry = candidate as SessionEntry;
+    const candidateRoutable = hasRoutableDeliveryContext(deliveryContextFromSession(entry));
+    const candidateUpdatedAt = entry.updatedAt ?? 0;
     if (
       !bestEntry ||
       (candidateRoutable && !bestRoutable) ||
       (candidateRoutable === bestRoutable && candidateUpdatedAt > bestUpdatedAt)
     ) {
-      bestEntry = candidate;
+      bestEntry = entry;
       bestUpdatedAt = candidateUpdatedAt;
       bestRoutable = candidateRoutable;
     }
@@ -110,7 +115,7 @@ function findSessionEntryInStore(
     let foundRoutableCandidate = false;
     if (Object.prototype.hasOwnProperty.call(store, normalized)) {
       foundRoutableCandidate ||= hasRoutableDeliveryContext(
-        deliveryContextFromSession(store[normalized]),
+        deliveryContextFromSession(asSessionEntry(store[normalized])),
       );
       acceptCandidate(store[normalized]);
     }
@@ -119,13 +124,13 @@ function findSessionEntryInStore(
       Object.prototype.hasOwnProperty.call(store, foldedLegacyKey)
     ) {
       foundRoutableCandidate ||= hasRoutableDeliveryContext(
-        deliveryContextFromSession(store[foldedLegacyKey]),
+        deliveryContextFromSession(asSessionEntry(store[foldedLegacyKey])),
       );
       acceptCandidate(store[foldedLegacyKey]);
     }
     if (trimmed !== normalized && Object.prototype.hasOwnProperty.call(store, trimmed)) {
       foundRoutableCandidate ||= hasRoutableDeliveryContext(
-        deliveryContextFromSession(store[trimmed]),
+        deliveryContextFromSession(asSessionEntry(store[trimmed])),
       );
       acceptCandidate(store[trimmed]);
     }
@@ -142,10 +147,14 @@ function findSessionEntryInStore(
 }
 
 function buildFreshestSessionEntryIndex(
-  store: Record<string, SessionEntry>,
+  store: Readonly<Record<string, unknown>>,
 ): Map<string, SessionEntry> {
   const index = new Map<string, SessionEntry>();
-  for (const [key, entry] of Object.entries(store)) {
+  for (const [key, candidate] of Object.entries(store)) {
+    const entry = asSessionEntry(candidate);
+    if (!entry) {
+      continue;
+    }
     const normalized = normalizeStoreSessionKey(key);
     const existing = index.get(normalized);
     const entryRoutable = hasRoutableDeliveryContext(deliveryContextFromSession(entry));
