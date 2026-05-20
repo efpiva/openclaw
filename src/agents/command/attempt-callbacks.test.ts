@@ -6,7 +6,11 @@ describe("createAgentAttemptLifecycleCallbacks", () => {
     const state = { currentTurnUserMessagePersisted: false, lifecycleEnded: false };
     const callbacks = createAgentAttemptLifecycleCallbacks(state);
 
-    callbacks.onUserMessagePersisted?.({ role: "user", content: "hello" });
+    callbacks.onUserMessagePersisted?.({
+      role: "user",
+      content: "hello",
+      timestamp: Date.now(),
+    });
 
     expect(state.currentTurnUserMessagePersisted).toBe(true);
     expect(state.lifecycleEnded).toBe(false);
