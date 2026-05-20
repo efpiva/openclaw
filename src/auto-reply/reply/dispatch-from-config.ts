@@ -103,6 +103,7 @@ import { resolveConversationBindingContextFromMessage } from "./conversation-bin
 import {
   createInternalHookEvent,
   loadSessionStore,
+  readSessionEntry,
   resolveSessionStoreEntry,
   resolveStorePath,
   triggerInternalHook,
@@ -327,8 +328,7 @@ const createShouldEmitVerboseProgress = (params: {
   const resolveLevel = () => {
     if (params.sessionKey && params.storePath) {
       try {
-        const store = loadSessionStore(params.storePath);
-        const entry = resolveSessionStoreEntry({ store, sessionKey: params.sessionKey }).existing;
+        const entry = readSessionEntry(params.storePath, params.sessionKey);
         const currentLevel = normalizeVerboseLevel(entry?.verboseLevel ?? "");
         if (currentLevel) {
           return currentLevel;

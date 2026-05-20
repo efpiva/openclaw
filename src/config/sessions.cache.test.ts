@@ -16,6 +16,7 @@ import {
   readSessionEntries,
   readSessionEntry,
   readSessionStoreSnapshot,
+  readSessionUpdatedAt,
   saveSessionStore,
   updateSessionStore,
 } from "./sessions/store.js";
@@ -352,6 +353,28 @@ describe("Session Store Cache", () => {
     const stats = getSessionStoreStringInternStatsForTest();
     expect(stats.poolSize).toBe(0);
     expect(stats.skippedSmall).toBeGreaterThanOrEqual(2);
+  });
+
+  it("reads updatedAt from immutable session snapshots without cloning cached stores", async () => {
+    const updatedAt = Date.now();
+    const testStore = createSingleSessionStore(
+      createSessionEntry({
+        updatedAt,
+      }),
+      "agent:main:main",
+    );
+
+    await saveSessionStore(storePath, testStore);
+    clearSessionStoreCacheForTest();
+    readSessionStoreSnapshot(storePath);
+    expect(readSessionEntry(storePath, "agent:main:main")?.updatedAt).toBe(updatedAt);
+
+    const parseSpy = vi.spyOn(JSON, "parse");
+
+    expect(readSessionUpdatedAt({ storePath, sessionKey: "agent:main:main" })).toBe(updatedAt);
+    expect(parseSpy).not.toHaveBeenCalled();
+
+    parseSpy.mockRestore();
   });
 
   it("serves immutable session snapshots without cloning cache hits", async () => {

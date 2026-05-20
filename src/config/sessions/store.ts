@@ -25,7 +25,7 @@ import {
   writeSessionStoreSnapshotCache,
 } from "./store-cache.js";
 import { normalizeStoreSessionKey, resolveSessionStoreEntry } from "./store-entry.js";
-import { loadSessionStore, normalizeSessionStore } from "./store-load.js";
+import { loadSessionStore, normalizeSessionStore, readSessionEntry } from "./store-load.js";
 import { collectSessionMaintenancePreserveKeys } from "./store-maintenance-preserve.js";
 import { resolveMaintenanceConfig } from "./store-maintenance-runtime.js";
 import {
@@ -95,9 +95,7 @@ export function readSessionUpdatedAt(params: {
   sessionKey: string;
 }): number | undefined {
   try {
-    const store = loadSessionStore(params.storePath);
-    const resolved = resolveSessionStoreEntry({ store, sessionKey: params.sessionKey });
-    return resolved.existing?.updatedAt;
+    return readSessionEntry(params.storePath, params.sessionKey)?.updatedAt;
   } catch {
     return undefined;
   }
