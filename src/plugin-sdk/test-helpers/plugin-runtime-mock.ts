@@ -379,6 +379,15 @@ export function createPluginRuntimeMock(overrides: DeepPartial<PluginRuntime> = 
         loadSessionStore: vi.fn(
           () => ({}),
         ) as unknown as PluginRuntime["agent"]["session"]["loadSessionStore"],
+        readSessionEntries: vi.fn(
+          () => [],
+        ) as unknown as PluginRuntime["agent"]["session"]["readSessionEntries"],
+        readSessionEntry: vi.fn(
+          () => undefined,
+        ) as unknown as PluginRuntime["agent"]["session"]["readSessionEntry"],
+        readSessionStoreSnapshot: vi.fn(() =>
+          Object.freeze({}),
+        ) as unknown as PluginRuntime["agent"]["session"]["readSessionStoreSnapshot"],
         saveSessionStore: vi
           .fn()
           .mockResolvedValue(
