@@ -12,6 +12,9 @@ import { getRuntimeConfig } from "../../config/config.js";
 import { resolveSessionFilePath, resolveStorePath } from "../../config/sessions/paths.js";
 import {
   loadSessionStore,
+  readSessionEntries,
+  readSessionEntry,
+  readSessionStoreSnapshot,
   saveSessionStore,
   updateSessionStore,
   updateSessionStoreEntry,
@@ -72,6 +75,9 @@ export function createRuntimeAgent(): PluginRuntime["agent"] {
   defineCachedValue(agentRuntime, "session", () => ({
     resolveStorePath,
     loadSessionStore,
+    readSessionEntries,
+    readSessionEntry,
+    readSessionStoreSnapshot,
     saveSessionStore,
     updateSessionStore,
     updateSessionStoreEntry,

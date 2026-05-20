@@ -1,6 +1,16 @@
 // Narrow session-store helpers for channel hot paths.
 
-export { loadSessionStore } from "../config/sessions/store-load.js";
+export {
+  loadSessionStore,
+  readSessionEntries,
+  readSessionEntry,
+  readSessionStoreSnapshot,
+} from "../config/sessions/store-load.js";
+export type {
+  SessionStoreSnapshot,
+  SessionStoreSnapshotEntries,
+  SessionStoreSnapshotEntry,
+} from "../config/sessions/store-cache.js";
 export { resolveSessionStoreEntry } from "../config/sessions/store-entry.js";
 export { resolveSessionTranscriptPathInDir, resolveStorePath } from "../config/sessions/paths.js";
 export { resolveAndPersistSessionFile } from "../config/sessions/session-file.js";
