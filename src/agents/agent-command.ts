@@ -56,6 +56,7 @@ import {
 import { isStoredCredentialCompatibleWithAuthProvider } from "./auth-profiles/order.js";
 import { clearSessionAuthProfileOverride } from "./auth-profiles/session-override.js";
 import { ensureAuthProfileStore } from "./auth-profiles/store.js";
+import { createAgentAttemptLifecycleCallbacks } from "./command/attempt-callbacks.js";
 import {
   persistSessionEntry as persistSessionEntryBase,
   prependInternalEventContext,
@@ -1086,7 +1087,11 @@ async function agentCommandInternal(
     }
 
     const startedAt = Date.now();
-    let lifecycleEnded = false;
+    const attemptLifecycleState = {
+      currentTurnUserMessagePersisted: false,
+      lifecycleEnded: false,
+    };
+    const attemptLifecycleCallbacks = createAgentAttemptLifecycleCallbacks(attemptLifecycleState);
     const attemptExecutionRuntime = await loadAttemptExecutionRuntime();
     const runContext = resolveAgentRunContext(opts);
     const messageChannel = resolveMessageChannel(
@@ -1126,7 +1131,7 @@ async function agentCommandInternal(
         });
 
         let fallbackAttemptIndex = 0;
-        let currentTurnUserMessagePersisted = false;
+        attemptLifecycleState.currentTurnUserMessagePersisted = false;
         const fallbackResult = await runWithModelFallback<AgentAttemptResult>({
           cfg,
           provider,
@@ -1219,19 +1224,9 @@ async function agentCommandInternal(
                 !isNewSession || (await attemptExecutionRuntime.sessionFileHasContent(sessionFile)),
               suppressPromptPersistenceOnRetry:
                 opts.suppressPromptPersistence === true ||
-                (isFallbackRetry && currentTurnUserMessagePersisted),
-              onUserMessagePersisted: () => {
-                currentTurnUserMessagePersisted = true;
-              },
-              onAgentEvent: (evt) => {
-                if (
-                  evt.stream === "lifecycle" &&
-                  typeof evt.data?.phase === "string" &&
-                  (evt.data.phase === "end" || evt.data.phase === "error")
-                ) {
-                  lifecycleEnded = true;
-                }
-              },
+                (isFallbackRetry && attemptLifecycleState.currentTurnUserMessagePersisted),
+              onUserMessagePersisted: attemptLifecycleCallbacks.onUserMessagePersisted,
+              onAgentEvent: attemptLifecycleCallbacks.onAgentEvent,
             });
           },
         });
@@ -1293,7 +1288,7 @@ async function agentCommandInternal(
             },
           };
         }
-        if (!lifecycleEnded) {
+        if (!attemptLifecycleState.lifecycleEnded) {
           const stopReason = result.meta.stopReason;
           if (stopReason && stopReason !== "end_turn") {
             console.error(`[agent] run ${runId} ended with stopReason=${stopReason}`);
@@ -1318,7 +1313,7 @@ async function agentCommandInternal(
             log.error(
               `Live session model switch in subagent run ${runId}: exceeded maximum retries (${MAX_LIVE_SWITCH_RETRIES})`,
             );
-            if (!lifecycleEnded) {
+            if (!attemptLifecycleState.lifecycleEnded) {
               emitAgentEvent({
                 runId,
                 stream: "lifecycle",
@@ -1343,7 +1338,7 @@ async function agentCommandInternal(
               `Live session model switch in subagent run ${runId}: ` +
                 `rejected ${sanitizeForLog(err.provider)}/${sanitizeForLog(err.model)} (not in allowlist)`,
             );
-            if (!lifecycleEnded) {
+            if (!attemptLifecycleState.lifecycleEnded) {
               emitAgentEvent({
                 runId,
                 stream: "lifecycle",
@@ -1387,13 +1382,13 @@ async function agentCommandInternal(
             storedModelOverride = err.model;
             storedModelOverrideSource = "user";
           }
-          lifecycleEnded = false;
+          attemptLifecycleState.lifecycleEnded = false;
           log.info(
             `Live session model switch in subagent run ${runId}: switching to ${sanitizeForLog(err.provider)}/${sanitizeForLog(err.model)}`,
           );
           continue;
         }
-        if (!lifecycleEnded) {
+        if (!attemptLifecycleState.lifecycleEnded) {
           emitAgentEvent({
             runId,
             stream: "lifecycle",
