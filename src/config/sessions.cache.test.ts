@@ -10,7 +10,11 @@ import {
 import {
   clearSessionStoreCacheForTest,
   loadSessionStore,
+  readSessionEntries,
+  readSessionEntry,
+  readSessionStoreSnapshot,
   saveSessionStore,
+  updateSessionStore,
 } from "./sessions/store.js";
 import type { SessionEntry } from "./sessions/types.js";
 
@@ -316,6 +320,66 @@ describe("Session Store Cache", () => {
     const stats = getSessionStoreStringInternStatsForTest();
     expect(stats.poolSize).toBe(0);
     expect(stats.skippedSmall).toBeGreaterThanOrEqual(2);
+  });
+
+  it("serves immutable session snapshots without cloning cache hits", async () => {
+    const testStore = createSingleSessionStore(
+      createSessionEntry({
+        origin: { provider: "openai" },
+        skillsSnapshot: {
+          prompt: "snapshot skill prompt ".repeat(200),
+          skills: [{ name: "alpha" }],
+        },
+      }),
+    );
+
+    await saveSessionStore(storePath, testStore);
+    clearSessionStoreCacheForTest();
+
+    const snapshot1 = readSessionStoreSnapshot(storePath);
+    const snapshot2 = readSessionStoreSnapshot(storePath);
+
+    expect(snapshot2).toBe(snapshot1);
+    expect(Object.isFrozen(snapshot1)).toBe(true);
+    expect(Object.isFrozen(snapshot1["session:1"])).toBe(true);
+    expect(Object.isFrozen(snapshot1["session:1"].skillsSnapshot?.skills)).toBe(true);
+    expect(readSessionEntry(storePath, "session:1")?.sessionId).toBe("id-1");
+    expect(readSessionEntries(storePath).map(([key]) => key)).toEqual(["session:1"]);
+
+    expect(() => {
+      (snapshot1 as Record<string, SessionEntry>)["session:2"] = createSessionEntry({
+        sessionId: "id-2",
+      });
+    }).toThrow(TypeError);
+
+    const mutable = loadSessionStore(storePath);
+    mutable["session:1"].origin = { provider: "mutated" };
+
+    expect(readSessionStoreSnapshot(storePath)["session:1"].origin?.provider).toBe("openai");
+  });
+
+  it("publishes a new immutable snapshot after session store writes", async () => {
+    await saveSessionStore(storePath, createSingleSessionStore());
+
+    const before = readSessionStoreSnapshot(storePath);
+
+    await updateSessionStore(
+      storePath,
+      (store) => {
+        store["session:1"] = {
+          ...store["session:1"],
+          displayName: "Updated Session",
+          updatedAt: Date.now() + 1,
+        };
+      },
+      { skipMaintenance: true },
+    );
+
+    const after = readSessionStoreSnapshot(storePath);
+
+    expect(after).not.toBe(before);
+    expect(before["session:1"].displayName).toBe("Test Session 1");
+    expect(after["session:1"].displayName).toBe("Updated Session");
   });
 
   it("should refresh cache when store file changes on disk", async () => {
