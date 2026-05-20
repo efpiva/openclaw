@@ -2,7 +2,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { createSuiteTempRootTracker } from "../test-helpers/temp-dir.js";
-import { readSessionStoreCache, writeSessionStoreCache } from "./sessions/store-cache.js";
+import {
+  getSessionStoreStringInternStatsForTest,
+  readSessionStoreCache,
+  writeSessionStoreCache,
+} from "./sessions/store-cache.js";
 import {
   clearSessionStoreCacheForTest,
   loadSessionStore,
@@ -245,6 +249,73 @@ describe("Session Store Cache", () => {
     expect(reloaded["session:1"].skillsSnapshot?.skills?.[0]?.name).toBe("alpha");
 
     stringifySpy.mockRestore();
+  });
+
+  it("interns duplicate large skillsSnapshot prompts across cached loads", async () => {
+    const largePrompt = "skill prompt ".repeat(200);
+    const testStore = {
+      "session:1": createSessionEntry({
+        skillsSnapshot: {
+          prompt: largePrompt,
+          skills: [{ name: "alpha" }],
+        },
+      }),
+      "session:2": createSessionEntry({
+        sessionId: "id-2",
+        displayName: "Test Session 2",
+        skillsSnapshot: {
+          prompt: largePrompt,
+          skills: [{ name: "beta" }],
+        },
+      }),
+    };
+
+    await saveSessionStore(storePath, testStore);
+    clearSessionStoreCacheForTest();
+
+    const loaded1 = loadSessionStore(storePath);
+    const afterFirstLoad = getSessionStoreStringInternStatsForTest();
+    expect(afterFirstLoad.poolSize).toBe(1);
+    expect(afterFirstLoad.stored).toBe(1);
+    expect(afterFirstLoad.reused).toBeGreaterThanOrEqual(1);
+
+    if (loaded1["session:1"].skillsSnapshot?.skills?.length) {
+      loaded1["session:1"].skillsSnapshot.skills[0].name = "mutated";
+    }
+
+    const loaded2 = loadSessionStore(storePath);
+    const afterSecondLoad = getSessionStoreStringInternStatsForTest();
+    expect(afterSecondLoad.poolSize).toBe(1);
+    expect(afterSecondLoad.reused).toBeGreaterThanOrEqual(afterFirstLoad.reused + 2);
+    expect(loaded2["session:1"].skillsSnapshot?.skills?.[0]?.name).toBe("alpha");
+  });
+
+  it("does not intern short skillsSnapshot prompts", async () => {
+    const testStore = {
+      "session:1": createSessionEntry({
+        skillsSnapshot: {
+          prompt: "short prompt",
+          skills: [{ name: "alpha" }],
+        },
+      }),
+      "session:2": createSessionEntry({
+        sessionId: "id-2",
+        displayName: "Test Session 2",
+        skillsSnapshot: {
+          prompt: "short prompt",
+          skills: [{ name: "beta" }],
+        },
+      }),
+    };
+
+    await saveSessionStore(storePath, testStore);
+    clearSessionStoreCacheForTest();
+
+    loadSessionStore(storePath);
+
+    const stats = getSessionStoreStringInternStatsForTest();
+    expect(stats.poolSize).toBe(0);
+    expect(stats.skippedSmall).toBeGreaterThanOrEqual(2);
   });
 
   it("should refresh cache when store file changes on disk", async () => {

@@ -11,6 +11,7 @@ import {
 import { getFileStatSnapshot } from "../cache-utils.js";
 import {
   cloneSessionStoreRecord,
+  internSessionEntryLargeStrings,
   isSessionStoreCacheEnabled,
   readSessionStoreCache,
   setSerializedSessionStore,
@@ -335,6 +336,7 @@ export function normalizeSessionStore(store: Record<string, SessionEntry>): bool
         ),
       ),
     );
+    internSessionEntryLargeStrings(normalized);
     if (normalized !== entry) {
       store[key] = normalized;
       changed = true;
