@@ -8,7 +8,7 @@ import { getRuntimeConfig } from "../io.js";
 import type { OpenClawConfig } from "../types.openclaw.js";
 import { resolveStorePath } from "./paths.js";
 import { normalizeStoreSessionKey } from "./store-entry.js";
-import { loadSessionStore } from "./store.js";
+import { readSessionStoreSnapshot } from "./store.js";
 import { resolveAllAgentSessionStoreTargetsSync } from "./targets.js";
 import { parseSessionThreadInfo } from "./thread-info.js";
 import type { SessionEntry } from "./types.js";
@@ -200,7 +200,7 @@ function loadDeliverySessionEntry(params: {
       }
     | undefined;
   for (const storePath of resolveDeliveryStorePaths(params.cfg, agentId)) {
-    const store = loadSessionStore(storePath);
+    const store = readSessionStoreSnapshot(storePath);
     const entry = findSessionEntryInStore(store, sessionKeys);
     const baseEntry = findSessionEntryInStore(store, baseKeys);
     if (!entry && !baseEntry) {
