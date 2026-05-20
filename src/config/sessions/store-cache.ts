@@ -9,17 +9,90 @@ type SessionStoreCacheEntry = {
 };
 
 const DEFAULT_SESSION_STORE_TTL_MS = 45_000; // 45 seconds (between 30-60s)
+const LARGE_SESSION_STORE_STRING_MIN_CHARS = 512;
+const LARGE_SESSION_STORE_STRING_MAX_INTERNED = 256;
 
 const SESSION_STORE_CACHE = createExpiringMapCache<string, SessionStoreCacheEntry>({
   ttlMs: getSessionStoreTtl,
 });
 const SESSION_STORE_SERIALIZED_CACHE = new Map<string, string>();
+const SESSION_STORE_STRING_INTERN_POOL = new Map<string, string>();
+const SESSION_STORE_STRING_INTERN_STATS = {
+  stored: 0,
+  reused: 0,
+  skippedSmall: 0,
+  skippedFull: 0,
+};
+
+function resetSessionStoreStringInternStats(): void {
+  SESSION_STORE_STRING_INTERN_STATS.stored = 0;
+  SESSION_STORE_STRING_INTERN_STATS.reused = 0;
+  SESSION_STORE_STRING_INTERN_STATS.skippedSmall = 0;
+  SESSION_STORE_STRING_INTERN_STATS.skippedFull = 0;
+}
+
+function internLargeSessionStoreString(value: string): string {
+  if (value.length < LARGE_SESSION_STORE_STRING_MIN_CHARS) {
+    SESSION_STORE_STRING_INTERN_STATS.skippedSmall += 1;
+    return value;
+  }
+  const interned = SESSION_STORE_STRING_INTERN_POOL.get(value);
+  if (interned !== undefined) {
+    SESSION_STORE_STRING_INTERN_STATS.reused += 1;
+    return interned;
+  }
+  if (SESSION_STORE_STRING_INTERN_POOL.size >= LARGE_SESSION_STORE_STRING_MAX_INTERNED) {
+    SESSION_STORE_STRING_INTERN_STATS.skippedFull += 1;
+    return value;
+  }
+  SESSION_STORE_STRING_INTERN_POOL.set(value, value);
+  SESSION_STORE_STRING_INTERN_STATS.stored += 1;
+  return value;
+}
+
+export function internSessionEntryLargeStrings(entry: SessionEntry): void {
+  const snapshot = entry.skillsSnapshot;
+  if (!snapshot?.prompt) {
+    return;
+  }
+  // The live session store repeatedly clones a small set of large skills prompts.
+  // Intern only that known high-duplication field so behavior and serialization stay unchanged.
+  snapshot.prompt = internLargeSessionStoreString(snapshot.prompt);
+}
+
+export function internSessionStoreLargeStrings(store: Record<string, SessionEntry>): void {
+  for (const entry of Object.values(store)) {
+    internSessionEntryLargeStrings(entry);
+  }
+}
+
+export function getSessionStoreStringInternStatsForTest(): {
+  poolSize: number;
+  stored: number;
+  reused: number;
+  skippedSmall: number;
+  skippedFull: number;
+  minChars: number;
+  maxEntries: number;
+} {
+  return {
+    poolSize: SESSION_STORE_STRING_INTERN_POOL.size,
+    stored: SESSION_STORE_STRING_INTERN_STATS.stored,
+    reused: SESSION_STORE_STRING_INTERN_STATS.reused,
+    skippedSmall: SESSION_STORE_STRING_INTERN_STATS.skippedSmall,
+    skippedFull: SESSION_STORE_STRING_INTERN_STATS.skippedFull,
+    minChars: LARGE_SESSION_STORE_STRING_MIN_CHARS,
+    maxEntries: LARGE_SESSION_STORE_STRING_MAX_INTERNED,
+  };
+}
 
 export function cloneSessionStoreRecord(
   store: Record<string, SessionEntry>,
   serialized?: string,
 ): Record<string, SessionEntry> {
-  return JSON.parse(serialized ?? JSON.stringify(store)) as Record<string, SessionEntry>;
+  const cloned = JSON.parse(serialized ?? JSON.stringify(store)) as Record<string, SessionEntry>;
+  internSessionStoreLargeStrings(cloned);
+  return cloned;
 }
 
 export function getSessionStoreTtl(): number {
@@ -36,6 +109,8 @@ export function isSessionStoreCacheEnabled(): boolean {
 export function clearSessionStoreCaches(): void {
   SESSION_STORE_CACHE.clear();
   SESSION_STORE_SERIALIZED_CACHE.clear();
+  SESSION_STORE_STRING_INTERN_POOL.clear();
+  resetSessionStoreStringInternStats();
 }
 
 export function invalidateSessionStoreCache(storePath: string): void {
@@ -103,8 +178,13 @@ export function writeSessionStoreCache(params: {
   sizeBytes?: number;
   serialized?: string;
 }): void {
+  const store =
+    params.serialized === undefined ? cloneSessionStoreRecord(params.store) : params.store;
+  if (params.serialized !== undefined) {
+    internSessionStoreLargeStrings(store);
+  }
   SESSION_STORE_CACHE.set(params.storePath, {
-    store: params.serialized === undefined ? cloneSessionStoreRecord(params.store) : params.store,
+    store,
     mtimeMs: params.mtimeMs,
     sizeBytes: params.sizeBytes,
     serialized: params.serialized,
