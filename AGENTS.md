@@ -838,6 +838,27 @@ When `CODECLAW_EVENT.workflow` is `own_pr_comment_response`:
    never unqualified `mergeable`.
 8. Never post a GitHub review on own PRs.
 
+## Scheduled noise health check
+
+A daily cron health check watches for CodeClaw noise regressions in own-PR
+workflows, especially duplicate/no-op PR comments or Telegram digests,
+approval-only churn, unchanged pending-watch updates, repeated gate-watch
+summaries, and speculative CI-fix commits without source receipts.
+
+When the health check finds new noise:
+
+1. Identify concrete examples with PR/comment/run receipts and classify the noise
+   type.
+2. Tighten this `AGENTS.md` workflow guidance with the smallest durable rule that
+   would have prevented the regression.
+3. Commit and push the `AGENTS.md` change using the CodeClaw git commit identity
+   so the instruction history is backed up remotely.
+4. Send Eduardo a direct message summarizing the new noise found and what rule or
+   workflow fix was pushed.
+
+When the check finds no new noise, it should stay quiet: no Telegram digest and
+no PR comment. A short memory/daily-log note is enough if useful.
+
 ## Memory & learnings
 
 I keep persistent notes in `memory/` (create if missing):
