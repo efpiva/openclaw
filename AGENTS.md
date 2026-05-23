@@ -692,9 +692,14 @@ Actionable triggers are limited to:
 - a PR head commit that CodeClaw did not create in this run (`HEAD_SHA` differs
   from the comment's recorded head and needs review, conflict handling, or gate
   classification);
-- new non-self `CHANGES_REQUESTED` reviews;
-- new non-self inline/issue comments that name a source, docs, test, pipeline,
-  security, correctness, or validation change request;
+- new non-self **human** `CHANGES_REQUESTED` reviews;
+- new non-self **human** inline/issue comments that name a source, docs, test,
+  pipeline, security, correctness, or validation change request;
+- new bot feedback (including Copilot) only when it names a concrete
+  correctness/security/compile/test/pipeline failure with a source receipt, such
+  as an unresolved symbol/import/path, guaranteed compile or test failure,
+  secret leak, panic/crash, broken runtime contract, or CI failure tied to exact
+  source-controlled code;
 - a required-check failing/cancelled set or latest run/build id changed in a way
   that requires a code fix or a new blocker/waiting classification;
 - base branch moved and the final freshness/merge-tree result changed;
@@ -704,6 +709,11 @@ Non-actionable deltas that must **not** cause a PR summary by themselves:
 
 - approval-only reviews;
 - Copilot/architect re-reviews that generate no comments or no open findings;
+- bot comments phrased as suggestions or maintainability/doc/test-hardening
+  ideas (`consider`, `could`, `nit`, `optional`, `for completeness`, broad
+  extra edge cases, refactors, micro-optimizations, or robustness improvements)
+  unless they include a concrete source receipt for a blocking correctness,
+  security, compile, test, or pipeline failure;
 - repeated feedback batches containing only items CodeClaw already addressed;
 - pending/in-progress checks with the same head, same run/build id, and same
   failing/pending set as the previous CodeClaw marker;
@@ -825,18 +835,30 @@ When `CODECLAW_EVENT.workflow` is `own_pr_comment_response`:
 3. Run the mandatory own PR duplicate-action guard. If CodeClaw already handled
    this head/base/feedback/gate state, exit cleanly without posting duplicate
    comments or Telegram summaries.
-4. Address related actionable feedback together with code/docs/tests as needed.
-5. Commit and push one coherent change set when possible. Do not split a feedback batch into multiple small churn commits unless a fresh, distinct actionable blocker appears after the first push; approval-only/no-op batches require no commit.
-6. Reply to individual threads/comments when possible. Post a top-level PR summary
+4. Classify every fresh feedback item before editing. For Copilot/bot feedback,
+   default to `no-push` unless the comment crosses the concrete blocker bar above.
+   Do not push for suggestion-only items such as comment/path cleanup, array-index
+   robustness, additional edge-case coverage, duplication refactors, dead-code
+   cleanup, allocation/performance polish, or documentation completeness unless a
+   human reviewer requested it or it is bundled into an already-required blocker
+   fix without broadening the validation surface. Record ignored bot suggestions
+   as `acknowledged-nonblocking`/`resolved-by-argument` in memory when useful,
+   not as commits.
+5. Address related actionable feedback together with code/docs/tests as needed.
+6. Commit and push one coherent change set when possible. Do not split a feedback batch into multiple small churn commits unless a fresh, distinct actionable blocker appears after the first push; approval-only/no-op/suggestion-only batches require no commit.
+7. Reply to individual threads/comments when possible, but avoid replying to
+   every bot suggestion just to say no; only reply when declining a comment would
+   otherwise leave a human-visible blocker ambiguous. Post a top-level PR summary
    only when a commit was pushed, a blocker/conflict is being reported, or a
    human-requested answer cannot be delivered inline. If the filtered delta is
-   approval-only/no-op, do not post a "no new code changes" PR comment.
-7. Immediately before posting any PR or Telegram summary, repeat the final
+   approval-only/no-op/suggestion-only, do not post a "no new code changes" PR
+   comment.
+8. Immediately before posting any PR or Telegram summary, repeat the final
    freshness check from the preflight. If base/head moved, recompute merge state
    and gate classification first. Summaries must say `clean against
    origin/<base>@<base_sha>` or `conflicting against origin/<base>@<base_sha>`,
    never unqualified `mergeable`.
-8. Never post a GitHub review on own PRs.
+9. Never post a GitHub review on own PRs.
 
 ## Scheduled noise health check
 
