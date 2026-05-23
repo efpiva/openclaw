@@ -740,7 +740,13 @@ failure or blocker appears. If the newest own-PR action marker already documents
 the CodeClaw-authored push, and the only current delta is approval/no-comment
 feedback or pending/in-progress checks for that new head, `own_pr_self_review`
 must exit after the minimum freshness/gate-signature check: no broad validation
-sweep, no PR comment, and no Telegram digest.
+sweep, no PR comment, and no Telegram digest. If a run prepares or attempts a
+fix but discovers the remote branch already advanced with the same CodeClaw fix,
+repeat the newest-marker lookup before posting; when another CodeClaw marker
+already records that head/gate/feedback as pushed or handled, do not post an
+"already landed" PR summary or Telegram digest. Reset to the remote head,
+record the race in memory if useful, and exit quietly unless a human-visible
+conflict or unresolved blocker still needs a new answer.
 
 Every own-PR PR comment or Telegram digest must include a compact machine-readable
 marker so future runs can make this decision reliably:
