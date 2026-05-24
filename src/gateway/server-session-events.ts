@@ -1,3 +1,4 @@
+import { profileHotpathAsync } from "../infra/hotpath-profiler.js";
 import type { SessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 import type { SessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import { asPositiveSafeInteger } from "../shared/number-coercion.js";
@@ -90,10 +91,26 @@ export function createTranscriptUpdateBroadcastHandler(params: {
   sessionMessageSubscribers: SessionMessageSubscribers;
 }) {
   let broadcastQueue = Promise.resolve();
+  let queuedTranscriptBroadcasts = 0;
   return (update: SessionTranscriptUpdate): void => {
+    const queuedAt = Date.now();
+    queuedTranscriptBroadcasts += 1;
     broadcastQueue = broadcastQueue
-      .then(() => handleTranscriptUpdateBroadcast(params, update))
-      .catch(() => undefined);
+      .then(() =>
+        profileHotpathAsync(
+          "gateway.transcriptBroadcast",
+          {
+            hasMessage: update.message !== undefined,
+            lagMs: Date.now() - queuedAt,
+            queueDepth: queuedTranscriptBroadcasts,
+          },
+          () => handleTranscriptUpdateBroadcast(params, update),
+        ),
+      )
+      .catch(() => undefined)
+      .finally(() => {
+        queuedTranscriptBroadcasts = Math.max(0, queuedTranscriptBroadcasts - 1);
+      });
   };
 }
 

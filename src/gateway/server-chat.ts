@@ -5,6 +5,7 @@ import { getRuntimeConfig } from "../config/io.js";
 import { type AgentEventPayload, getAgentRunContext } from "../infra/agent-events.js";
 import { detectErrorKind, type ErrorKind } from "../infra/errors.js";
 import { resolveHeartbeatVisibility } from "../infra/heartbeat-visibility.js";
+import { profileHotpathSync } from "../infra/hotpath-profiler.js";
 import { isAcpSessionKey, isSubagentSessionKey } from "../sessions/session-key-utils.js";
 import { setSafeTimeout } from "../utils/timer-delay.js";
 import {
@@ -300,73 +301,82 @@ export function createAgentEventHandler({
   };
 
   const buildSessionEventSnapshot = (sessionKey: string, evt?: AgentEventPayload) => {
-    const row = loadGatewaySessionRowForSnapshot(sessionKey);
-    const lifecyclePatch = evt
-      ? deriveGatewaySessionLifecycleSnapshot({
-          session: row
-            ? {
-                updatedAt: row.updatedAt ?? undefined,
-                status: row.status,
-                startedAt: row.startedAt,
-                endedAt: row.endedAt,
-                runtimeMs: row.runtimeMs,
-                abortedLastRun: row.abortedLastRun,
-              }
-            : undefined,
-          event: evt,
-        })
-      : {};
-    const session = row ? { ...row, ...lifecyclePatch } : undefined;
-    const snapshotSource = session ?? lifecyclePatch;
-    return {
-      ...(session ? { session } : {}),
-      updatedAt: snapshotSource.updatedAt,
-      sessionId: row?.sessionId,
-      kind: row?.kind,
-      channel: row?.channel,
-      subject: row?.subject,
-      groupChannel: row?.groupChannel,
-      space: row?.space,
-      chatType: row?.chatType,
-      origin: row?.origin,
-      spawnedBy: row?.spawnedBy,
-      spawnedWorkspaceDir: row?.spawnedWorkspaceDir,
-      forkedFromParent: row?.forkedFromParent,
-      spawnDepth: row?.spawnDepth,
-      subagentRole: row?.subagentRole,
-      subagentControlScope: row?.subagentControlScope,
-      label: row?.label,
-      displayName: row?.displayName,
-      deliveryContext: row?.deliveryContext,
-      parentSessionKey: row?.parentSessionKey,
-      childSessions: row?.childSessions,
-      thinkingLevel: row?.thinkingLevel,
-      fastMode: row?.fastMode,
-      verboseLevel: row?.verboseLevel,
-      traceLevel: row?.traceLevel,
-      reasoningLevel: row?.reasoningLevel,
-      elevatedLevel: row?.elevatedLevel,
-      sendPolicy: row?.sendPolicy,
-      systemSent: row?.systemSent,
-      inputTokens: row?.inputTokens,
-      outputTokens: row?.outputTokens,
-      lastChannel: row?.lastChannel,
-      lastTo: row?.lastTo,
-      lastAccountId: row?.lastAccountId,
-      lastThreadId: row?.lastThreadId,
-      totalTokens: row?.totalTokens,
-      totalTokensFresh: row?.totalTokensFresh,
-      contextTokens: row?.contextTokens,
-      estimatedCostUsd: row?.estimatedCostUsd,
-      responseUsage: row?.responseUsage,
-      modelProvider: row?.modelProvider,
-      model: row?.model,
-      status: snapshotSource.status,
-      startedAt: snapshotSource.startedAt,
-      endedAt: snapshotSource.endedAt,
-      runtimeMs: snapshotSource.runtimeMs,
-      abortedLastRun: snapshotSource.abortedLastRun,
+    const profileFields = {
+      childSessionCount: 0,
+      hasEvent: evt !== undefined,
+      hasRow: false,
     };
+    return profileHotpathSync("gateway.eventSnapshot", profileFields, () => {
+      const row = loadGatewaySessionRowForSnapshot(sessionKey);
+      profileFields.hasRow = Boolean(row);
+      profileFields.childSessionCount = row?.childSessions?.length ?? 0;
+      const lifecyclePatch = evt
+        ? deriveGatewaySessionLifecycleSnapshot({
+            session: row
+              ? {
+                  updatedAt: row.updatedAt ?? undefined,
+                  status: row.status,
+                  startedAt: row.startedAt,
+                  endedAt: row.endedAt,
+                  runtimeMs: row.runtimeMs,
+                  abortedLastRun: row.abortedLastRun,
+                }
+              : undefined,
+            event: evt,
+          })
+        : {};
+      const session = row ? { ...row, ...lifecyclePatch } : undefined;
+      const snapshotSource = session ?? lifecyclePatch;
+      return {
+        ...(session ? { session } : {}),
+        updatedAt: snapshotSource.updatedAt,
+        sessionId: row?.sessionId,
+        kind: row?.kind,
+        channel: row?.channel,
+        subject: row?.subject,
+        groupChannel: row?.groupChannel,
+        space: row?.space,
+        chatType: row?.chatType,
+        origin: row?.origin,
+        spawnedBy: row?.spawnedBy,
+        spawnedWorkspaceDir: row?.spawnedWorkspaceDir,
+        forkedFromParent: row?.forkedFromParent,
+        spawnDepth: row?.spawnDepth,
+        subagentRole: row?.subagentRole,
+        subagentControlScope: row?.subagentControlScope,
+        label: row?.label,
+        displayName: row?.displayName,
+        deliveryContext: row?.deliveryContext,
+        parentSessionKey: row?.parentSessionKey,
+        childSessions: row?.childSessions,
+        thinkingLevel: row?.thinkingLevel,
+        fastMode: row?.fastMode,
+        verboseLevel: row?.verboseLevel,
+        traceLevel: row?.traceLevel,
+        reasoningLevel: row?.reasoningLevel,
+        elevatedLevel: row?.elevatedLevel,
+        sendPolicy: row?.sendPolicy,
+        systemSent: row?.systemSent,
+        inputTokens: row?.inputTokens,
+        outputTokens: row?.outputTokens,
+        lastChannel: row?.lastChannel,
+        lastTo: row?.lastTo,
+        lastAccountId: row?.lastAccountId,
+        lastThreadId: row?.lastThreadId,
+        totalTokens: row?.totalTokens,
+        totalTokensFresh: row?.totalTokensFresh,
+        contextTokens: row?.contextTokens,
+        estimatedCostUsd: row?.estimatedCostUsd,
+        responseUsage: row?.responseUsage,
+        modelProvider: row?.modelProvider,
+        model: row?.model,
+        status: snapshotSource.status,
+        startedAt: snapshotSource.startedAt,
+        endedAt: snapshotSource.endedAt,
+        runtimeMs: snapshotSource.runtimeMs,
+        abortedLastRun: snapshotSource.abortedLastRun,
+      };
+    });
   };
 
   const finalizeLifecycleEvent = (evt: AgentEventPayload, opts?: TerminalLifecycleOptions) => {

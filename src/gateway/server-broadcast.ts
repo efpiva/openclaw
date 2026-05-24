@@ -1,3 +1,4 @@
+import { profileHotpathSync } from "../infra/hotpath-profiler.js";
 import { logRejectedLargePayload } from "../logging/diagnostic-payload.js";
 import {
   ADMIN_SCOPE,
@@ -130,14 +131,27 @@ export function createGatewayBroadcaster(params: { clients: Set<GatewayWsClient>
       | undefined;
     const getFrameBase = () => {
       if (!frameBase) {
-        frameBase = {
-          eventJSON: JSON.stringify(event),
-          payloadFragment: serializeFrameField("payload", payload),
-          stateVersionFragment:
-            opts?.stateVersion === undefined
-              ? ""
-              : serializeFrameField("stateVersion", opts.stateVersion),
+        const profileFields = {
+          clientCount: params.clients.size,
+          event,
+          isTargeted,
+          payloadBytes: 0,
+          stateVersionBytes: 0,
+          targetCount: targetConnIds?.size ?? 0,
         };
+        frameBase = profileHotpathSync("gateway.broadcast.serialize", profileFields, () => {
+          const nextFrameBase = {
+            eventJSON: JSON.stringify(event),
+            payloadFragment: serializeFrameField("payload", payload),
+            stateVersionFragment:
+              opts?.stateVersion === undefined
+                ? ""
+                : serializeFrameField("stateVersion", opts.stateVersion),
+          };
+          profileFields.payloadBytes = Buffer.byteLength(nextFrameBase.payloadFragment);
+          profileFields.stateVersionBytes = Buffer.byteLength(nextFrameBase.stateVersionFragment);
+          return nextFrameBase;
+        });
       }
       return frameBase;
     };

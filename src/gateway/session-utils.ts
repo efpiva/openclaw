@@ -57,6 +57,7 @@ import {
 } from "../config/sessions.js";
 import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { openRootFileSync } from "../infra/boundary-file-read.js";
+import { profileHotpathSync } from "../infra/hotpath-profiler.js";
 import { projectPluginSessionExtensionsSync } from "../plugins/host-hook-state.js";
 import {
   DEFAULT_AGENT_ID,
@@ -502,47 +503,61 @@ function buildStoreChildSessionIndex(
   now = Date.now(),
   subagentRuns?: SessionListRowContext["subagentRuns"],
 ): Map<string, string[]> {
-  const childSessionsByKey = new Map<string, string[]>();
-  for (const [key, entry] of Object.entries(store)) {
-    if (!entry) {
-      continue;
-    }
-    const parentKeys = [
-      normalizeOptionalString(entry.spawnedBy),
-      normalizeOptionalString(entry.parentSessionKey),
-    ].filter((value): value is string => Boolean(value) && value !== key);
-    if (parentKeys.length === 0) {
-      continue;
-    }
-    const latest = subagentRuns
-      ? subagentRuns.getDisplaySubagentRun(key)
-      : getSessionDisplaySubagentRunByChildSessionKey(key);
-    let latestControllerSessionKey: string | undefined;
-    if (latest) {
-      latestControllerSessionKey =
-        normalizeOptionalString(latest.controllerSessionKey) ||
-        normalizeOptionalString(latest.requesterSessionKey);
-      if (
-        !shouldKeepSubagentRunChildLink(latest, {
-          activeDescendants: subagentRuns
-            ? subagentRuns.countActiveDescendantRuns(key)
-            : countActiveDescendantRuns(key),
-          now,
-        })
-      ) {
+  const entries = Object.entries(store);
+  const profileFields = {
+    childLinkCount: 0,
+    indexedParentCount: 0,
+    storeEntries: entries.length,
+    usedSubagentIndex: Boolean(subagentRuns),
+  };
+  return profileHotpathSync("gateway.session.childIndex", profileFields, () => {
+    const childSessionsByKey = new Map<string, string[]>();
+    for (const [key, entry] of entries) {
+      if (!entry) {
         continue;
       }
-    } else if (!shouldKeepStoreOnlyChildLink(entry, now)) {
-      continue;
-    }
-    for (const parentKey of parentKeys) {
-      if (latestControllerSessionKey && latestControllerSessionKey !== parentKey) {
+      const parentKeys = [
+        normalizeOptionalString(entry.spawnedBy),
+        normalizeOptionalString(entry.parentSessionKey),
+      ].filter((value): value is string => Boolean(value) && value !== key);
+      if (parentKeys.length === 0) {
         continue;
       }
-      addChildSessionKey(childSessionsByKey, parentKey, key);
+      const latest = subagentRuns
+        ? subagentRuns.getDisplaySubagentRun(key)
+        : getSessionDisplaySubagentRunByChildSessionKey(key);
+      let latestControllerSessionKey: string | undefined;
+      if (latest) {
+        latestControllerSessionKey =
+          normalizeOptionalString(latest.controllerSessionKey) ||
+          normalizeOptionalString(latest.requesterSessionKey);
+        if (
+          !shouldKeepSubagentRunChildLink(latest, {
+            activeDescendants: subagentRuns
+              ? subagentRuns.countActiveDescendantRuns(key)
+              : countActiveDescendantRuns(key),
+            now,
+          })
+        ) {
+          continue;
+        }
+      } else if (!shouldKeepStoreOnlyChildLink(entry, now)) {
+        continue;
+      }
+      for (const parentKey of parentKeys) {
+        if (latestControllerSessionKey && latestControllerSessionKey !== parentKey) {
+          continue;
+        }
+        addChildSessionKey(childSessionsByKey, parentKey, key);
+      }
     }
-  }
-  return childSessionsByKey;
+    profileFields.indexedParentCount = childSessionsByKey.size;
+    profileFields.childLinkCount = Array.from(childSessionsByKey.values()).reduce(
+      (sum, children) => sum + children.length,
+      0,
+    );
+    return childSessionsByKey;
+  });
 }
 
 function buildSessionListRowContext(params: {
@@ -2050,20 +2065,33 @@ export function loadGatewaySessionRow(
     transcriptUsageMaxBytes?: number;
   },
 ): GatewaySessionRow | null {
-  const { cfg, storePath, store, entry, canonicalKey } = loadSessionEntry(sessionKey);
-  if (!entry) {
-    return null;
-  }
-  return buildGatewaySessionRow({
-    cfg,
-    storePath,
-    store,
-    key: canonicalKey,
-    entry,
-    now: options?.now,
-    includeDerivedTitles: options?.includeDerivedTitles,
-    includeLastMessage: options?.includeLastMessage,
-    transcriptUsageMaxBytes: options?.transcriptUsageMaxBytes,
+  const profileFields = {
+    childSessionCount: 0,
+    hasEntry: false,
+    includeDerivedTitles: options?.includeDerivedTitles === true,
+    includeLastMessage: options?.includeLastMessage === true,
+    storeEntries: 0,
+  };
+  return profileHotpathSync("gateway.session.row", profileFields, () => {
+    const { cfg, storePath, store, entry, canonicalKey } = loadSessionEntry(sessionKey);
+    profileFields.storeEntries = Object.keys(store).length;
+    if (!entry) {
+      return null;
+    }
+    profileFields.hasEntry = true;
+    const row = buildGatewaySessionRow({
+      cfg,
+      storePath,
+      store,
+      key: canonicalKey,
+      entry,
+      now: options?.now,
+      includeDerivedTitles: options?.includeDerivedTitles,
+      includeLastMessage: options?.includeLastMessage,
+      transcriptUsageMaxBytes: options?.transcriptUsageMaxBytes,
+    });
+    profileFields.childSessionCount = row.childSessions?.length ?? 0;
+    return row;
   });
 }
 

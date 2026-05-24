@@ -1,5 +1,6 @@
 import { clearAgentRunContext, onAgentEvent } from "../infra/agent-events.js";
 import { onHeartbeatEvent } from "../infra/heartbeat-events.js";
+import { profileHotpathAsync } from "../infra/hotpath-profiler.js";
 import { onSessionLifecycleEvent } from "../sessions/session-lifecycle-events.js";
 import { onSessionTranscriptUpdate } from "../sessions/transcript-events.js";
 import type { ChatAbortControllerEntry } from "./chat-abort.js";
@@ -82,8 +83,24 @@ export function startGatewayEventSubscriptions(params: {
     return lifecycleEventHandlerPromise;
   };
 
+  let queuedAgentEvents = 0;
   const agentUnsub = onAgentEvent((evt) => {
-    void getAgentEventHandler().then((handler) => handler(evt));
+    const queuedAt = Date.now();
+    queuedAgentEvents += 1;
+    void getAgentEventHandler()
+      .then((handler) =>
+        profileHotpathAsync(
+          "gateway.agentEvent",
+          {
+            lagMs: Date.now() - queuedAt,
+            queueDepth: queuedAgentEvents,
+          },
+          async () => handler(evt),
+        ),
+      )
+      .finally(() => {
+        queuedAgentEvents = Math.max(0, queuedAgentEvents - 1);
+      });
   });
 
   const heartbeatUnsub = onHeartbeatEvent((evt) => {

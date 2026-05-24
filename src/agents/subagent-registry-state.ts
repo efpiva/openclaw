@@ -1,3 +1,4 @@
+import { profileHotpathSync } from "../infra/hotpath-profiler.js";
 import {
   loadSubagentRegistryFromDisk,
   saveSubagentRegistryToDisk,
@@ -41,22 +42,35 @@ export function restoreSubagentRunsFromDisk(params: {
 export function getSubagentRunsSnapshotForRead(
   inMemoryRuns: Map<string, SubagentRunRecord>,
 ): Map<string, SubagentRunRecord> {
-  const merged = new Map<string, SubagentRunRecord>();
   const shouldReadDisk =
     process.env.OPENCLAW_TEST_READ_SUBAGENT_RUNS_FROM_DISK === "1" ||
     !(process.env.VITEST || process.env.NODE_ENV === "test");
-  if (shouldReadDisk) {
-    try {
-      // Persisted state lets other worker processes observe active runs.
-      for (const [runId, entry] of loadSubagentRegistryFromDisk().entries()) {
-        merged.set(runId, entry);
+  const profileFields = {
+    diskReadFailed: false,
+    diskRunCount: 0,
+    memoryRunCount: inMemoryRuns.size,
+    mergedRunCount: 0,
+    readDisk: shouldReadDisk,
+  };
+  return profileHotpathSync("subagent.registry.snapshot", profileFields, () => {
+    const merged = new Map<string, SubagentRunRecord>();
+    if (shouldReadDisk) {
+      try {
+        // Persisted state lets other worker processes observe active runs.
+        const diskRuns = loadSubagentRegistryFromDisk();
+        profileFields.diskRunCount = diskRuns.size;
+        for (const [runId, entry] of diskRuns.entries()) {
+          merged.set(runId, entry);
+        }
+      } catch {
+        profileFields.diskReadFailed = true;
+        // Ignore disk read failures and fall back to local memory.
       }
-    } catch {
-      // Ignore disk read failures and fall back to local memory.
     }
-  }
-  for (const [runId, entry] of inMemoryRuns.entries()) {
-    merged.set(runId, entry);
-  }
-  return merged;
+    for (const [runId, entry] of inMemoryRuns.entries()) {
+      merged.set(runId, entry);
+    }
+    profileFields.mergedRunCount = merged.size;
+    return merged;
+  });
 }

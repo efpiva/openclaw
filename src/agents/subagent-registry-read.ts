@@ -1,4 +1,5 @@
 import { getAgentRunContext } from "../infra/agent-events.js";
+import { profileHotpathSync } from "../infra/hotpath-profiler.js";
 import { subagentRuns } from "./subagent-registry-memory.js";
 import {
   buildSubagentRunReadIndexFromRuns,
@@ -18,10 +19,18 @@ export {
 } from "./subagent-session-metrics.js";
 
 export function buildSubagentRunReadIndex(now = Date.now()): SubagentRunReadIndex {
-  return buildSubagentRunReadIndexFromRuns({
-    runs: getSubagentRunsSnapshotForRead(subagentRuns),
-    inMemoryRuns: subagentRuns.values(),
-    now,
+  const profileFields = {
+    inMemoryRunCount: subagentRuns.size,
+    snapshotRunCount: 0,
+  };
+  return profileHotpathSync("subagent.registry.readIndex", profileFields, () => {
+    const snapshot = getSubagentRunsSnapshotForRead(subagentRuns);
+    profileFields.snapshotRunCount = snapshot.size;
+    return buildSubagentRunReadIndexFromRuns({
+      runs: snapshot,
+      inMemoryRuns: subagentRuns.values(),
+      now,
+    });
   });
 }
 
