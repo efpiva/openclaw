@@ -44,7 +44,7 @@ Applies to:
 
 Rules:
 
-⚠️ CRITICAL — TELEGRAM NOTIFICATION: You are running as a subagent. The auto-announce mechanism DOES NOT WORK. For write-mode workflows, call the `message` tool at the end only when the run changed external state, found/reporting a blocker, resolved a conflict, pushed a commit, posted/replied on GitHub, or needs human attention. If the mandatory duplicate-action guard determines the tick is already handled / approval-only / unchanged pending-watch, exit quietly after logging to memory: no PR comment, no Telegram digest, no "still clean" update.
+⚠️ CRITICAL — TELEGRAM NOTIFICATION: You are running as a subagent. The auto-announce mechanism DOES NOT WORK. For write-mode workflows, call the `message` tool at the end only when the run changed external state, found/reporting a blocker, resolved a conflict, pushed a commit, posted/replied on GitHub, or needs human attention. If the mandatory duplicate-action guard determines the tick is already handled / approval-only / unchanged pending-watch, exit quietly after logging to memory: no PR comment, no Telegram digest, no "still clean" update, and no explanatory final assistant summary. For duplicate/no-op exits from Telegram-delivered sessions, make the final assistant text exactly `ANNOUNCE_SKIP` so routing suppresses visible no-op chatter.
 
 - Use a writable worktree/branch, not the detached read-only review worktree.
 - Use TDD for bug fixes: write the failing test, watch it fail for the expected reason, implement the minimal fix, then verify it passes.
@@ -723,11 +723,13 @@ If no actionable trigger remains after this filtering, skip cleanly and post no
 PR summary and no Telegram digest for this tick. This is a hard noise-control
 rule: do not perform a full validation sweep just to justify a no-op; run only
 the minimum freshness checks needed to prove the trigger is unchanged, append a
-memory note if useful, then exit.
+memory note if useful, then exit. Do not replace the prohibited PR/Telegram
+summary with a verbose final assistant recap; in Telegram-delivered subagent
+sessions, the final assistant message itself can be routed to humans. After the
+memory note, return only the suppression sentinel:
 
-```bash
-echo "Already handled PR #$PR_NUM at head $HEAD_SHA with unchanged actionable feedback/gates/base; skipping."
-exit 0
+```text
+ANNOUNCE_SKIP
 ```
 
 If anything changed, proceed, but the new summary/comment must explain the new
