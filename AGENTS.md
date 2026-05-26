@@ -34,6 +34,29 @@ Every automation prompt starts with `CODECLAW_EVENT`. Read `workflow` and run ex
 
 If `workflow` is missing, stop and ask for clarification in the topic. Do not infer the workflow from prose.
 
+## Workspace cleanup discipline
+
+Every workflow owns the scratch directories it creates or reuses. Before any normal exit, skip/no-op exit, blocked exit, or final human-visible summary, clean up per-run/per-PR worktrees and heavyweight build outputs.
+
+Scratch roots that must not accumulate across runs:
+
+- `$HOME/work`
+- `$HOME/worktrees`
+- `$HOME/write`
+- `$HOME/own-prs`
+- `$HOME/reviews`
+- `$HOME/.openclaw/workspace/worktrees`
+- `$HOME/.openclaw/workspace/repos/*-pr*` and other per-PR clones
+- `$HOME/.openclaw/worktrees`
+
+Rules:
+
+1. Before deleting a worktree I used, run `git status --short` in it. If source changes are needed, commit and push them first; if changes are accidental or unneeded, reset or discard them before deletion.
+2. Delete the per-run/per-PR worktree after the review/fix/comment flow completes. Future ticks must recreate from remote state rather than relying on a stale local checkout.
+3. If I must keep a checkout for an explicit blocker, remove heavyweight build outputs first, especially `target/`, `node_modules/`, `dist/`, and temporary logs.
+4. Keep shared caches: `$HOME/repos`, bare `.git` mirrors, and `$HOME/.openclaw/workspace/cache` are reused across runs. Do not delete shared caches during workflow cleanup unless Eduardo explicitly asks for cache maintenance.
+5. If cleanup fails, say so in the final summary or memory note with the exact path and error. Do not silently leave large scratch trees behind.
+
 ## Write-mode workflows
 
 Applies to:
@@ -51,6 +74,7 @@ Rules:
 - Commit and push completed changes.
 - Update the relevant issue, PR, or comment thread with what changed and how it was validated.
 - Never leave uncommitted changes behind.
+- Always run the Workspace cleanup discipline before exiting; do not leave per-PR worktrees, `target/`, or `node_modules/` behind after a completed or skipped run.
 - Issue workflow opens draft PRs only; draft PRs become ready only after `own_pr_self_review` passes.
 - Never post a GitHub review on own PRs; use commits/pushes plus PR comments.
 
@@ -774,6 +798,7 @@ When `CODECLAW_EVENT.workflow` is `issue_triage_and_fix`:
 3. Reproduce with TDD. If I cannot reproduce, comment on the issue with the commands run, observations, why reproduction failed, and what evidence is missing; do not open a PR.
 4. If reproduced, commit the failing test and fix, run repo-standard validation, push the branch, open a draft PR linked to the issue, and comment on the issue with the PR link and validation summary.
 5. Do not mark the draft PR ready; a later `own_pr_self_review` event does that.
+6. Run the Workspace cleanup discipline: remove the issue worktree after commits are pushed or the non-repro comment is posted; keep only shared caches.
 
 ## Workflow: own_pr_self_review
 
@@ -803,7 +828,8 @@ When `CODECLAW_EVENT.workflow` is `own_pr_self_review`:
    origin/<base>@<base_sha>` or `conflicting against origin/<base>@<base_sha>`,
    never unqualified `mergeable`.
 8. Mark draft PRs ready after self-review passes; do not wait for PR gates. If `is_draft` is true and no self-review findings remain, run `gh pr ready` and comment that CodeClaw self-review passed. Pending gates or external/non-actionable failures do not block publishing; later cron follow-ups handle real failures.
-9. Never post a GitHub review on own PRs.
+9. Run the Workspace cleanup discipline: remove the writable PR worktree after commits are pushed, after a skip/no-op decision, or after a blocker is reported; keep only shared caches.
+10. Never post a GitHub review on own PRs.
 
 
 ### PR gates for own PR workflows
@@ -866,7 +892,8 @@ When `CODECLAW_EVENT.workflow` is `own_pr_comment_response`:
    and gate classification first. Summaries must say `clean against
    origin/<base>@<base_sha>` or `conflicting against origin/<base>@<base_sha>`,
    never unqualified `mergeable`.
-9. Never post a GitHub review on own PRs.
+9. Run the Workspace cleanup discipline: remove the writable PR worktree after commits are pushed, after a skip/no-op decision, or after a blocker is reported; keep only shared caches.
+10. Never post a GitHub review on own PRs.
 
 ## Scheduled noise health check
 
