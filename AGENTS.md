@@ -727,6 +727,7 @@ Actionable triggers are limited to:
 - a required-check failing/cancelled set or latest run/build id changed in a way
   that requires a code fix or a new blocker/waiting classification;
 - base branch moved and the final freshness/merge-tree result changed;
+- GitHub reports merge is blocked by unresolved review conversations (`Merging is blocked: A conversation must be resolved before this pull request can be merged`), or GraphQL `reviewThreads` contains unresolved threads;
 - draft/open state changed.
 
 Non-actionable deltas that must **not** cause a PR summary by themselves:
@@ -777,6 +778,13 @@ already records that head/gate/feedback as pushed or handled, do not post an
 "already landed" PR summary or Telegram digest. Reset to the remote head,
 record the race in memory if useful, and exit quietly unless a human-visible
 conflict or unresolved blocker still needs a new answer.
+
+Unresolved review conversations are merge-blocking own-PR work. For every unresolved
+thread, either address the requested change or decide to defer/decline it with a
+short rationale. In both cases, reply in the specific thread; if the thread is no
+longer blocking after that answer, resolve/close it with GitHub's review-thread
+resolution API/UI. Do not leave a thread silently unresolved after pushing a fix
+or after deciding to defer; the reply is the receipt that unblocks mergeability.
 
 Every own-PR PR comment or Telegram digest must include a compact machine-readable
 marker so future runs can make this decision reliably:
@@ -869,7 +877,8 @@ When `CODECLAW_EVENT.workflow` is `own_pr_comment_response`:
 2. Run the mandatory write-mode PR state preflight above before editing or
    summarizing. If the PR is conflicting, resolve the conflict first or post a
    scoped blocked/conflict summary; do not process feedback as if the head were
-   merge-ready.
+   merge-ready. Also inspect unresolved review conversations; they are merge-blocking
+   even when there is no new commit or CI failure.
 3. Run the mandatory own PR duplicate-action guard. If CodeClaw already handled
    this head/base/feedback/gate state, exit cleanly without posting duplicate
    comments or Telegram summaries.
@@ -886,11 +895,13 @@ When `CODECLAW_EVENT.workflow` is `own_pr_comment_response`:
 6. Commit and push one coherent change set when possible. Do not split a feedback batch into multiple small churn commits unless a fresh, distinct actionable blocker appears after the first push; approval-only/no-op/suggestion-only batches require no commit.
 7. Reply to individual threads/comments when possible, but avoid replying to
    every bot suggestion just to say no; only reply when declining a comment would
-   otherwise leave a human-visible blocker ambiguous. Post a top-level PR summary
-   only when a commit was pushed, a blocker/conflict is being reported, or a
-   human-requested answer cannot be delivered inline. If the filtered delta is
-   approval-only/no-op/suggestion-only, do not post a "no new code changes" PR
-   comment.
+   otherwise leave a human-visible blocker ambiguous. For unresolved review threads,
+   replying is mandatory: after fixing, reply with the commit/validation receipt;
+   after deferring/declining, reply with the reason. Resolve/close the thread when
+   the answer removes the merge blocker. Post a top-level PR summary only when a
+   commit was pushed, a blocker/conflict is being reported, or a human-requested
+   answer cannot be delivered inline. If the filtered delta is approval-only/no-op/suggestion-only,
+   do not post a "no new code changes" PR comment.
 8. Immediately before posting any PR or Telegram summary, repeat the final
    freshness check from the preflight. If base/head moved, recompute merge state
    and gate classification first. Summaries must say `clean against
