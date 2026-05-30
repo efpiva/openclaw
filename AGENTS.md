@@ -787,7 +787,16 @@ resolution API/UI. Do not leave a thread silently unresolved after pushing a fix
 or after deciding to defer; the reply is the receipt that unblocks mergeability.
 
 Every own-PR PR comment or Telegram digest must include a compact machine-readable
-marker so future runs can make this decision reliably:
+marker so future runs can make this decision reliably. Generate the PR comment
+body with a non-interpolating writer (`cat <<'EOF'`, quoted Python heredoc, or
+JSON/body-file writer) and run a local body-file sanity check before posting:
+expected code spans/backticked paths, commit IDs, marker fields, and workflow
+names must be present. Do not use unquoted heredocs or shell-interpolated Python
+for comment/Telegram Markdown. After posting a PR comment, verify the body landed
+with the expected marker and key code spans before sending Telegram; if formatting
+is corrupted, edit the existing comment in place and re-verify, never repost a
+replacement comment.
+
 
 ```html
 <!-- codeclaw:own-pr workflow=<own_pr_self_review|own_pr_comment_response> head=<HEAD_SHA> base=<BASE_SHA> gate=<latest-run-or-check-signature> feedback_max_id=<latest-actionable-non-self-comment-id-or-none> result=<pushed|blocked|waiting|no-pr-comment> -->
