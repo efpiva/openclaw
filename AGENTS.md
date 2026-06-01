@@ -71,12 +71,21 @@ Rules:
 
 - Use a writable worktree/branch, not the detached read-only review worktree.
 - Use TDD for bug fixes: write the failing test, watch it fail for the expected reason, implement the minimal fix, then verify it passes.
-- Commit and push completed changes.
-- Update the relevant issue, PR, or comment thread with what changed and how it was validated.
+- Commit completed changes locally, then run `scripts/codeclaw_approval_gate.py classify` on the exact files in the would-be push before any `git push`.
+- **Issue-triage exception:** for `issue_triage_and_fix` runs on issues carrying the `codeclaw` label, Eduardo has pre-authorized CodeClaw to push the branch and open a draft PR after TDD/repo-standard validation. Do not request human approval and do not pause on the behavior-changing approval gate for these issue fixes; the behavior change is reviewed inside the newly-created PR by CI gates plus `own_pr_self_review`. Record the classification and validation in the PR/issue notes, push, open the draft PR, and let the self-review workflow handle PR-readiness.
+- **Default to approval-required for existing PRs.** Human approval is required before pushing any CodeClaw-authored change to an existing PR (`own_pr_self_review` / `own_pr_comment_response`) unless the approval gate and the diff prove it is purely non-behavioral. Behavior-changing includes runtime, deployment, release, pipeline, security, data, routing, auth, scheduling, or production behavior; source-code behavior changes; CI/release YAML changes; generated deployment artifact changes; config/default changes; scripts; migrations; and docs/runbook changes that instruct operators to do something behavior-changing.
+- If approval is required, run `scripts/codeclaw_approval_gate.py request` to create the pending approval token and render the approval request, including the paused PR `session_key`. Send Eduardo a concise Telegram DM (`telegram` target `7570099326`), not a group/topic announcement, with repo/PR, session key, head/base, commit SHA, files changed, behavior impact, reviewer/gate receipts, validation, and inline approval/deny controls when available. If native DM delivery fails, surface that failure in the current session and keep the PR run paused; do not assume group/session final text reached Eduardo.
+- Resume/push approval-gated existing-PR changes only after an explicit structured approval: button/callback if available, or a token-bearing command such as `approve push-pr-<num>-<nonce>`. Use `scripts/codeclaw_approval_gate.py handle-command` for token commands; it must ignore ordinary follow-up questions and return the paused `session_key` plus `CODECLAW_APPROVAL_RESULT ...` message to send back to that PR session. Before pushing, run `scripts/codeclaw_approval_gate.py assert-approved` for the exact repo, PR, head, base, and commit being pushed. If the approval is denied, expired, missing, or mismatched, do not push; report the blocker and clean up.
+- Approval is not required for changes that are purely non-behavioral and non-operational, such as typo-only comments or internal CodeClaw workflow/memory updates, unless they are bundled with a behavior-changing commit. When claiming no approval is required, record the approval-gate classification in the run notes.
+- After a push, update the relevant issue, PR, or comment thread with what changed and how it was validated.
 - Never leave uncommitted changes behind.
 - Always run the Workspace cleanup discipline before exiting; do not leave per-PR worktrees, `target/`, or `node_modules/` behind after a completed or skipped run.
 - Issue workflow opens draft PRs only; draft PRs become ready only after `own_pr_self_review` passes.
 - Never post a GitHub review on own PRs; use commits/pushes plus PR comments.
+
+### Approval response handling
+
+When an inbound Telegram message or button callback is exactly `approve push-pr-<num>-<nonce>` or `deny push-pr-<num>-<nonce>`, run `scripts/codeclaw_approval_gate.py handle-command --text <message> --by <sender>`. If it returns `handled: true`, forward its `session_message` to the returned `session_key` with `sessions_send`; that paused PR session owns the final push/cleanup decision. If `handle-command` returns `handled: false`, treat the message as normal conversation. Never infer approval from replies like "ok", "looks good", follow-up questions, reactions, or messages without the exact token.
 
 ## Read-only workflows
 
@@ -817,7 +826,7 @@ When `CODECLAW_EVENT.workflow` is `issue_triage_and_fix`:
 1. Assign the issue to `self_login` from the prompt.
 2. Create or reuse branch `codeclaw/issue-<number>-<short-title-slug>` in a writable worktree.
 3. Reproduce with TDD. If I cannot reproduce, comment on the issue with the commands run, observations, why reproduction failed, and what evidence is missing; do not open a PR.
-4. If reproduced, commit the failing test and fix, run repo-standard validation, push the branch, open a draft PR linked to the issue, and comment on the issue with the PR link and validation summary.
+4. If reproduced, commit the failing test and fix, run repo-standard validation, classify the diff for notes only, then push the branch without approval, open a draft PR linked to the issue, and comment on the issue with the PR link and validation summary. This workflow is specifically for `codeclaw`-labeled issues, so do not create or wait on `push-pr-*` approval tokens before the initial PR push.
 5. Do not mark the draft PR ready; a later `own_pr_self_review` event does that.
 6. Run the Workspace cleanup discipline: remove the issue worktree after commits are pushed or the non-repro comment is posted; keep only shared caches.
 
@@ -838,10 +847,11 @@ When `CODECLAW_EVENT.workflow` is `own_pr_self_review`:
    - Resolve conflicts in the worktree.
    - Run focused tests/checks for the conflicted areas.
    - Commit conflict-resolution changes when the resolution changes files.
-   - Push with `git push --force-with-lease` after a rebase, or normal `git push` after a merge commit.
+   - Run the write-mode approval gate before pushing the conflict resolution; conflict resolutions often change runtime/deployment behavior and must default to approval-required unless proven purely mechanical/non-behavioral.
+   - After approval when required, push with `git push --force-with-lease` after a rebase, or normal `git push` after a merge commit.
    - Comment concisely with what was resolved, the base SHA used, and what validation ran.
 4. Run the same semantic review lenses used for external reviews.
-5. If findings exist, fix them inline, add/update tests where relevant, commit, push, and comment a concise self-review summary. Do not create a commit for speculative cleanup, approval-only feedback, or a "likely" CI cause without a concrete source receipt (compiler/clippy/test log, reproducible local failure, or static proof such as an actual unresolved reference/import path). If local execution is blocked by private credentials, run the narrowest static/source checks that prove the patch cannot introduce the inverse failure before pushing.
+5. If findings exist, fix them inline, add/update tests where relevant, and commit locally. Run the write-mode approval gate on the exact changed files before pushing; if approval is required, pause for Eduardo's explicit approval and run `assert-approved` before the push. After approval when required, push and comment a concise self-review summary. Do not create a commit for speculative cleanup, approval-only feedback, or a "likely" CI cause without a concrete source receipt (compiler/clippy/test log, reproducible local failure, or static proof such as an actual unresolved reference/import path). If local execution is blocked by private credentials, run the narrowest static/source checks that prove the patch cannot introduce the inverse failure before pushing.
 6. Check PR gates with `gh pr checks <number> --repo <owner>/<repo>`. Use PR gates for follow-up fixes when checks fail: address actionable failures with commits/pushes and re-check. A self-review or gate follow-up is **not complete** until every current-head failing/cancelled/pending required check is classified as one of: `actionable-fixed`, `actionable-blocked`, `infra/non-actionable`, `expected-neutral`, or `pending-watch`.
 7. Immediately before posting any PR or Telegram summary, repeat the final
    freshness check from the preflight. If base/head moved, recompute merge state
@@ -858,7 +868,7 @@ When `CODECLAW_EVENT.workflow` is `own_pr_self_review`:
 For `own_pr_self_review` and `own_pr_comment_response`, I monitor PR gates as a
 follow-up signal, not as a blanket publish blocker. Use `gh pr checks <number> --repo <owner>/<repo>`
 and inspect failing check URLs/logs. Use PR gates for follow-up fixes when checks fail:
-if a gate fails and the failure is actionable, fix it with code/tests/docs, commit, push,
+if a gate fails and the failure is actionable, fix it with code/tests/docs, commit locally, run the write-mode approval gate, push only after approval when required,
 and re-check gates. If gates are pending, do not churn; note that CodeClaw is waiting.
 Mark draft PRs ready after self-review passes; do not wait for PR gates. If a gate is
 unrelated/infrastructure-only, comment with evidence and keep monitoring.
@@ -901,7 +911,7 @@ When `CODECLAW_EVENT.workflow` is `own_pr_comment_response`:
    as `acknowledged-nonblocking`/`resolved-by-argument` in memory when useful,
    not as commits.
 5. Address related actionable feedback together with code/docs/tests as needed.
-6. Commit and push one coherent change set when possible. Do not split a feedback batch into multiple small churn commits unless a fresh, distinct actionable blocker appears after the first push; approval-only/no-op/suggestion-only batches require no commit.
+6. Commit one coherent change set locally when possible. Run the write-mode approval gate on the exact changed files before pushing; if approval is required, pause for Eduardo's explicit approval and run `assert-approved` before the push. After approval when required, push the coherent change set. Do not split a feedback batch into multiple small churn commits unless a fresh, distinct actionable blocker appears after the first push; approval-only/no-op/suggestion-only batches require no commit.
 7. Reply to individual threads/comments when possible, but avoid replying to
    every bot suggestion just to say no; only reply when declining a comment would
    otherwise leave a human-visible blocker ambiguous. For unresolved review threads,
