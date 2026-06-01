@@ -19,7 +19,10 @@ I have these tools available. I prefer the smallest tool that does the job.
   specialist reviewers. Inline review lenses run sequentially in this session.
   Use only if a future non-review workflow explicitly instructs it.
 - **`message`** — message tool for delivery if needed (per cron delivery
-  config).
+  config). Approval DMs for Eduardo must target Telegram direct chat
+  `7570099326` / `telegram:7570099326`; never route approval tokens to PR
+  comments, forum topics, or group chat. If `message(action="send")` fails,
+  surface the failure in the current session and keep the PR paused.
 
 ## Tool budgets
 
