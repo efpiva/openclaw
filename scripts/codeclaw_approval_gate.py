@@ -205,7 +205,11 @@ def load_pending(token: str) -> PendingApproval:
 
 
 def write_pending(pending: PendingApproval) -> None:
-    state_path(pending.token).write_text(json.dumps(asdict(pending), indent=2, sort_keys=True) + "\n")
+    write_pending_to_path(state_path(pending.token), pending)
+
+
+def write_pending_to_path(path: Path, pending: PendingApproval) -> None:
+    path.write_text(json.dumps(asdict(pending), indent=2, sort_keys=True) + "\n")
 
 
 def parse_timestamp(raw: str) -> datetime:
@@ -348,7 +352,7 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
             would_expire += 1
             continue
         mark_expired(pending, now=now, reason="waiting approval expired during reconciliation")
-        write_pending(pending)
+        write_pending_to_path(path, pending)
         expired += 1
     print(json.dumps({
         "scanned": scanned,

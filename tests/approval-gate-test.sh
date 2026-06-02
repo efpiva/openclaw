@@ -112,3 +112,20 @@ python3 "$gate" reconcile >/tmp/codeclaw-gate-reconcile.json
 grep -q '"expired": 1' /tmp/codeclaw-gate-reconcile.json
 grep -q '"status": "expired"' "$state_dir/push-pr-1925-expired.json"
 grep -q '"closed_by": "codeclaw-reconcile"' "$state_dir/push-pr-1925-expired.json"
+
+# Reconciliation must update the scanned file even when legacy filenames do not match tokens.
+python3 - "$state_dir/push-pr-1925-expired.json" "$state_dir/push-pr-1925-expired.stale.json" <<'PY'
+import json, sys
+from datetime import datetime, timedelta, timezone
+src, dst = sys.argv[1:]
+data = json.loads(open(src).read())
+data["token"] = "push-pr-1925-expired-legacy"
+data["status"] = "waiting"
+data["expires_at"] = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+for key in ["closed_at", "closed_by", "closed_reason"]:
+    data.pop(key, None)
+open(dst, "w").write(json.dumps(data, indent=2, sort_keys=True) + "\n")
+PY
+python3 "$gate" reconcile >/tmp/codeclaw-gate-reconcile-legacy.json
+grep -q '"status": "expired"' "$state_dir/push-pr-1925-expired.stale.json"
+test ! -e "$state_dir/push-pr-1925-expired-legacy.json"
