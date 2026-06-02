@@ -1,0 +1,38 @@
+# CodeClaw/OpenClaw runtime artifacts generated inside the agent workspace.
+.cache/
+cache/
+.local/
+.openclaw/
+.codeclaw/
+.codeclaw-approvals/
+artifacts/
+review-artifacts/
+repos/
+reviews/
+tmp/
+tmp-*/
+worktrees/
+__pycache__/
+*.pyc
+
+# Runtime scratch/status files.
+-
+=20
+AttributeError:
+TypeError:
+HEARTBEAT.md
+USER.md
+clippy_ok
+inner
+inner_*
+parent
+warn
+
+# Review scratch outputs.
+digest-*.txt
+review-*-body.md
+
+# Generated memory files. Keep intentionally tracked memory files explicit.
+memory/*
+!memory/
+!memory/2026-05-28.md
