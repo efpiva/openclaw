@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasPollCreationParams } from "./poll-params.js";
+import { hasPollCreationParams, hasSendBlockingPollCreationParams } from "./poll-params.js";
 
 describe("poll params", () => {
   it("does not treat explicit false booleans as poll creation params", () => {
@@ -64,5 +64,39 @@ describe("poll params", () => {
     expect(hasPollCreationParams({ pollId: "poll-1" })).toBe(false);
     expect(hasPollCreationParams({ pollOptionId: "answer-1" })).toBe(false);
     expect(hasPollCreationParams({ pollOptionIndexes: [1] })).toBe(false);
+  });
+
+  it("does not block send for generated empty poll defaults", () => {
+    expect(
+      hasSendBlockingPollCreationParams({
+        pollQuestion: "",
+        pollOption: [],
+        pollDurationHours: 1,
+        pollDurationSeconds: 1,
+        pollPublic: false,
+        pollAnonymous: false,
+      }),
+    ).toBe(false);
+  });
+
+  it("blocks send when poll defaults include explicit poll content", () => {
+    expect(
+      hasSendBlockingPollCreationParams({
+        pollQuestion: "Deploy now?",
+        pollOption: [],
+        pollDurationHours: 1,
+        pollDurationSeconds: 1,
+        pollPublic: false,
+        pollAnonymous: false,
+      }),
+    ).toBe(true);
+    expect(
+      hasSendBlockingPollCreationParams({
+        pollQuestion: "",
+        pollOption: ["Yes", "No"],
+        pollDurationHours: 1,
+      }),
+    ).toBe(true);
+    expect(hasSendBlockingPollCreationParams({ pollPublic: true })).toBe(true);
   });
 });

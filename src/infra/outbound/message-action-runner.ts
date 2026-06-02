@@ -30,7 +30,7 @@ import {
 import type { OutboundMediaAccess } from "../../media/load-options.js";
 import { getAgentScopedMediaLocalRoots } from "../../media/local-roots.js";
 import { resolveAgentScopedOutboundMediaAccess } from "../../media/read-capability.js";
-import { hasPollCreationParams } from "../../poll-params.js";
+import { hasSendBlockingPollCreationParams } from "../../poll-params.js";
 import { resolvePollMaxSelections } from "../../polls.js";
 import { resolveFirstBoundAccountId } from "../../routing/bound-account-read.js";
 import {
@@ -1300,7 +1300,7 @@ export async function runMessageAction(
   if (action === "broadcast") {
     return handleBroadcastAction(input, params);
   }
-  if (action === "send" && hasPollCreationParams(params)) {
+  if (action === "send" && hasSendBlockingPollCreationParams(params)) {
     throw new Error('Poll fields require action "poll"; use action "poll" instead of "send".');
   }
   if (shouldUseInternalSourceReplySink(input, params)) {

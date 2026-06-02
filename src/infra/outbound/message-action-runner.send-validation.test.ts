@@ -204,6 +204,31 @@ describe("runMessageAction send validation", () => {
     });
   });
 
+  it("allows send actions with generated empty poll defaults", async () => {
+    const result = await runDrySend({
+      cfg: workspaceConfig,
+      actionParams: {
+        channel: "workspace",
+        target: "#C12345678",
+        message: "CodeClaw digest",
+        pollQuestion: "",
+        pollOption: [],
+        pollDurationHours: 1,
+        pollDurationSeconds: 1,
+        pollPublic: false,
+        pollAnonymous: false,
+      },
+      toolContext: { currentChannelId: "C12345678" },
+    });
+
+    expect(result).toMatchObject({
+      kind: "send",
+      channel: "workspace",
+      handledBy: "core",
+      dryRun: true,
+    });
+  });
+
   it("strips unsupported citation control markers from normal channel sends", async () => {
     const sentText: string[] = [];
     const sendText: NonNullable<
