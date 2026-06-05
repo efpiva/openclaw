@@ -616,6 +616,12 @@ Narrate AFTER both sends complete: `Step 9 done: digests posted to PR topic and 
 **Rules:**
 - **MUST run this step.** If step 8 (gh review posted) succeeded but either
   the PR-topic digest or #general digest did not run, the workflow is incomplete.
+- Send each digest destination at most once per workflow run. After a native
+  `message` tool call for #general returns success or a `messageId`, immediately
+  record that fact in the run notes/memory and treat the #general digest as
+  complete; cleanup, step-order recovery, or final-summary retries must not send
+  it again. Retry only when the prior tool result explicitly failed (`isError`,
+  `ok:false`, transport error) and the one allowed retry has not already run.
 - **NO raw findings JSON, NO full receipts** in the digest body.
 - **Engineer-readable WHY**: name the file/function and one concrete failure
   mode per top blocker. Avoid jargon like "trust boundary violation"
