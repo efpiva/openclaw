@@ -1,8 +1,16 @@
-// Plugin runtime types describe activated plugin capabilities exposed to core execution.
 import type { OperatorScope } from "../../gateway/operator-scopes.js";
+// Plugin runtime types describe activated plugin capabilities exposed to core execution.
+import type { PluginAcpFacade } from "./runtime-acp.js";
 import type { PluginRuntimeCore, RuntimeLogger } from "./types-core.js";
 
 export type { RuntimeLogger };
+export type {
+  AcpTaskStatus,
+  PluginAcpFacade,
+  PluginAcpRequester,
+  PluginAcpSpawnRequest,
+  PluginAcpSpawnResult,
+} from "./runtime-acp.js";
 
 type PluginRuntimeChannel = import("./types-channel.js").PluginRuntimeChannel;
 
@@ -127,6 +135,7 @@ export type PluginRuntime = PluginRuntimeCore & {
     release: (params: { path: string }) => Promise<void>;
     removeIfLossless: (params: { path: string }) => Promise<boolean>;
   };
+  acp: PluginAcpFacade;
   channel: PluginRuntimeChannel;
 };
 

@@ -239,7 +239,8 @@ vi.mock("../tasks/runtime-internal.js", () => ({
   listTasksForOwnerKey: hoisted.listTasksForOwnerKeyMock,
 }));
 
-const { isSpawnAcpAcceptedResult, spawnAcpDirect } = await import("./acp-spawn.js");
+const { isSpawnAcpAcceptedResult, spawnAcpDirect, spawnAcpPluginRun } =
+  await import("./acp-spawn.js");
 type SpawnRequest = Parameters<typeof spawnAcpDirect>[0];
 type SpawnContext = Parameters<typeof spawnAcpDirect>[1];
 type SpawnResult = Awaited<ReturnType<typeof spawnAcpDirect>>;
@@ -3209,6 +3210,66 @@ describe("spawnAcpDirect", () => {
             backend: "acpx",
           }),
         }),
+      }),
+    );
+  });
+
+  it("persists trusted plugin run tasks as silent and non-deliverable", async () => {
+    hoisted.createRunningTaskRunMock.mockImplementationOnce((params: unknown) => {
+      const task = params as { childSessionKey: string };
+      return {
+        taskId: "task-1",
+        runtime: "acp",
+        ownerKey: "agent:main:main",
+        scopeKind: "session",
+        childSessionKey: task.childSessionKey,
+        runId: "run-1",
+      };
+    });
+
+    await expect(
+      spawnAcpPluginRun(
+        {
+          task: "Review PR without direct delivery",
+          agentId: "codex",
+          mode: "run",
+        },
+        {
+          agentSessionKey: "agent:main:main",
+        },
+      ),
+    ).resolves.toMatchObject({ status: "accepted" });
+
+    expect(hoisted.createRunningTaskRunMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        deliveryStatus: "not_applicable",
+        notifyPolicy: "silent",
+      }),
+    );
+    expect(hoisted.startAcpSpawnParentStreamRelayMock).not.toHaveBeenCalled();
+  });
+
+  it("cleans up the ACP session when plugin task persistence fails", async () => {
+    hoisted.createRunningTaskRunMock.mockReturnValueOnce(null);
+
+    const result = await spawnAcpPluginRun(
+      {
+        task: "Review PR with durable task authority",
+        agentId: "codex",
+        mode: "run",
+      },
+      {
+        agentSessionKey: "agent:main:main",
+      },
+    );
+
+    expect(expectFailedSpawn(result, "error")).toMatchObject({
+      errorCode: "spawn_failed",
+    });
+    expect(hoisted.cleanupFailedAcpSpawnMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        shouldDeleteSession: true,
+        deleteTranscript: true,
       }),
     );
   });

@@ -816,6 +816,13 @@ export function createPluginRuntimeMock(overrides: DeepPartial<PluginRuntime> = 
       release: vi.fn(),
       removeIfLossless: vi.fn(),
     },
+    acp: {
+      bind: vi.fn(() => ({
+        spawn: vi.fn(),
+        status: vi.fn(),
+        cancel: vi.fn(),
+      })),
+    },
     llm: {
       complete: vi.fn(),
     },

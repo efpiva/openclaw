@@ -3,6 +3,7 @@ import type { OpenClawConfig } from "../config/types.openclaw.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import type {
   DetachedRunningTaskCreateParams,
+  DetachedTaskCancelParams,
   DetachedTaskCreateParams,
   DetachedTaskFinalizeParams,
 } from "./detached-task-runtime-contract.js";
@@ -595,7 +596,7 @@ export async function cancelFlowByIdForOwner(params: {
   });
 }
 
-export async function cancelDetachedTaskRunById(params: { cfg: OpenClawConfig; taskId: string }) {
+export async function cancelDetachedTaskRunById(params: DetachedTaskCancelParams) {
   const task = getTaskById(params.taskId);
   if (!task) {
     return cancelTaskById(params);

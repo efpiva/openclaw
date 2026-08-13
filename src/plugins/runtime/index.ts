@@ -23,6 +23,7 @@ import {
 } from "../../video-generation/runtime.js";
 import { listWebSearchProviders, runWebSearch } from "../../web-search/runtime.js";
 import { gatewaySubagentState } from "./gateway-bindings.js";
+import { createRuntimeAcp } from "./runtime-acp.js";
 import { createRuntimeAgent } from "./runtime-agent.js";
 import { defineCachedValue } from "./runtime-cache.js";
 import { createRuntimeChannel } from "./runtime-channel.js";
@@ -272,6 +273,7 @@ export function createPluginRuntime(_options: CreatePluginRuntimeOptions = {}): 
     gateway: createRuntimeGateway(),
     config: createRuntimeConfig(),
     agent: createRuntimeAgent(),
+    acp: createRuntimeAcp(),
     subagent: createLateBindingSubagent(
       _options.subagent,
       _options.allowGatewaySubagentBinding === true,

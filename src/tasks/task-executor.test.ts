@@ -719,6 +719,27 @@ describe("task-executor", () => {
     });
   });
 
+  it("preserves an ACP cancellation reason through the control-plane request", async () => {
+    await withTaskExecutorStateDir(async () => {
+      hoisted.cancelSessionMock.mockResolvedValue(undefined);
+      const child = createRunningAcpChildTaskRun({ runId: "run-reasoned-cancel" });
+
+      const cancelled = await cancelDetachedTaskRunById({
+        cfg: {} as never,
+        taskId: child.taskId,
+        reason: "review superseded",
+      });
+
+      expect(cancelled).toMatchObject({ found: true, cancelled: true });
+      expect(hoisted.cancelSessionMock).toHaveBeenCalledWith({
+        cfg: {} as never,
+        sessionKey: child.childSessionKey,
+        reason: "review superseded",
+      });
+      expect(getTaskById(child.taskId)?.error).toBe("review superseded");
+    });
+  });
+
   it("dispatches detached task cancellation through the registered runtime", async () => {
     await withTaskExecutorStateDir(async () => {
       hoisted.cancelSessionMock.mockResolvedValue(undefined);

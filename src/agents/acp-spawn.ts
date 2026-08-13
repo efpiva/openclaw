@@ -73,6 +73,7 @@ import {
 } from "../routing/session-key.js";
 import { createRunningTaskRun } from "../tasks/detached-task-runtime.js";
 import { listTasksForOwnerKey } from "../tasks/runtime-internal.js";
+import type { TaskRecord } from "../tasks/task-registry.types.js";
 import { deliveryContextFromSession, normalizeDeliveryContext } from "../utils/delivery-context.js";
 import {
   type AcpSpawnParentRelayHandle,
@@ -117,13 +118,13 @@ const log = createSubsystemLogger("agents/acp-spawn");
 const ACP_RUNTIME_TIMEOUT_MAX_SECONDS = 24 * 60 * 60;
 
 export const ACP_SPAWN_MODES = ["run", "session"] as const;
-type SpawnAcpMode = (typeof ACP_SPAWN_MODES)[number];
-const ACP_SPAWN_SANDBOX_MODES = ["inherit", "require"] as const;
+export type SpawnAcpMode = (typeof ACP_SPAWN_MODES)[number];
+export const ACP_SPAWN_SANDBOX_MODES = ["inherit", "require"] as const;
 export type SpawnAcpSandboxMode = (typeof ACP_SPAWN_SANDBOX_MODES)[number];
 export const ACP_SPAWN_STREAM_TARGETS = ["parent"] as const;
-type SpawnAcpStreamTarget = (typeof ACP_SPAWN_STREAM_TARGETS)[number];
+export type SpawnAcpStreamTarget = (typeof ACP_SPAWN_STREAM_TARGETS)[number];
 
-type SpawnAcpParams = {
+export type SpawnAcpParams = {
   task: string;
   label?: string;
   agentId?: string;
@@ -182,7 +183,7 @@ export type SpawnAcpContext = {
   inheritedToolDenylist?: string[];
 };
 
-const ACP_SPAWN_ERROR_CODES = [
+export const ACP_SPAWN_ERROR_CODES = [
   "acp_disabled",
   "requester_session_required",
   "runtime_policy",
@@ -197,7 +198,7 @@ const ACP_SPAWN_ERROR_CODES = [
   "spawn_failed",
   "dispatch_failed",
 ] as const;
-type SpawnAcpErrorCode = (typeof ACP_SPAWN_ERROR_CODES)[number];
+export type SpawnAcpErrorCode = (typeof ACP_SPAWN_ERROR_CODES)[number];
 
 type SpawnAcpResultFields = {
   childSessionKey?: string;
@@ -228,10 +229,27 @@ export function isSpawnAcpAcceptedResult(result: SpawnAcpResult): result is Spaw
   return result.status === "accepted";
 }
 
-const ACP_SPAWN_ACCEPTED_NOTE =
+export const ACP_SPAWN_ACCEPTED_NOTE =
   "initial ACP task queued in isolated session; follow-ups continue in the bound thread.";
-const ACP_SPAWN_SESSION_ACCEPTED_NOTE =
+export const ACP_SPAWN_SESSION_ACCEPTED_NOTE =
   "thread-bound ACP session stays active after this task; continue in-thread for follow-ups.";
+
+function isSilentPluginTaskOwned(params: {
+  task: TaskRecord | null;
+  ownerKey: string;
+  childSessionKey: string;
+  runId: string;
+}): boolean {
+  const { task } = params;
+  return Boolean(
+    task &&
+    task.runtime === "acp" &&
+    task.scopeKind === "session" &&
+    task.ownerKey === params.ownerKey &&
+    task.childSessionKey === params.childSessionKey &&
+    task.runId === params.runId,
+  );
+}
 
 export function resolveAcpSpawnRuntimePolicyError(params: {
   cfg: OpenClawConfig;
@@ -1262,9 +1280,10 @@ function resolveAcpSpawnBootstrapDeliveryPlan(params: {
   };
 }
 
-export async function spawnAcpDirect(
+async function spawnAcp(
   params: SpawnAcpParams,
   ctx: SpawnAcpContext,
+  options: { silentTaskDelivery: boolean },
 ): Promise<SpawnAcpResult> {
   const cfg = getRuntimeConfig();
   const runTimeoutSeconds = resolveConfiguredSubagentRunTimeoutSeconds({
@@ -1421,12 +1440,14 @@ export async function spawnAcpDirect(
       error: runtimeOptionsResult.error,
     });
   }
-  const { effectiveStreamToParent } = resolveAcpSpawnStreamPlan({
+  const spawnStreamPlan = resolveAcpSpawnStreamPlan({
     spawnMode,
     requestThreadBinding,
     streamToParentRequested,
     requester: requesterState,
   });
+  const suppressTaskDelivery = options.silentTaskDelivery && spawnMode === "run";
+  const effectiveStreamToParent = !suppressTaskDelivery && spawnStreamPlan.effectiveStreamToParent;
 
   const sessionKey = `agent:${targetAgentId}:acp:${crypto.randomUUID()}`;
   const runtimeMode = resolveAcpSessionMode(spawnMode);
@@ -1650,20 +1671,40 @@ export async function spawnAcpDirect(
         label: params.label,
         task: params.task,
         preferMetadata: true,
-        deliveryStatus: requesterInternalKey ? "pending" : "parent_missing",
+        deliveryStatus: suppressTaskDelivery
+          ? "not_applicable"
+          : requesterInternalKey
+            ? "pending"
+            : "parent_missing",
+        ...(suppressTaskDelivery ? { notifyPolicy: "silent" } : {}),
         startedAt: Date.now(),
       });
-      if (!task) {
-        log.warn("Failed to persist background task for ACP spawn", {
-          sessionKey,
-          runId: childRunId,
-        });
+      if (
+        suppressTaskDelivery &&
+        (!task ||
+          !isSilentPluginTaskOwned({
+            task,
+            ownerKey: requesterInternalKey,
+            childSessionKey: sessionKey,
+            runId: childRunId,
+          }))
+      ) {
+        throw new Error("ACP task registry entry could not be persisted for the requester.");
       }
     } catch (error) {
-      log.warn("Failed to create background task for ACP spawn", {
+      parentRelay?.dispose();
+      await cleanupFailedAcpSpawn({
+        cfg,
         sessionKey,
-        runId: childRunId,
-        error,
+        shouldDeleteSession: true,
+        deleteTranscript: true,
+        runtimeCloseHandle: initializedRuntime,
+      });
+      return createAcpSpawnFailure({
+        status: "error",
+        errorCode: "spawn_failed",
+        error: summarizeError(error),
+        childSessionKey: sessionKey,
       });
     }
     return {
@@ -1691,20 +1732,39 @@ export async function spawnAcpDirect(
       label: params.label,
       task: params.task,
       preferMetadata: true,
-      deliveryStatus: requesterInternalKey ? "pending" : "parent_missing",
+      deliveryStatus: suppressTaskDelivery
+        ? "not_applicable"
+        : requesterInternalKey
+          ? "pending"
+          : "parent_missing",
+      ...(suppressTaskDelivery ? { notifyPolicy: "silent" } : {}),
       startedAt: Date.now(),
     });
-    if (!task) {
-      log.warn("Failed to persist background task for ACP spawn", {
-        sessionKey,
-        runId: childRunId,
-      });
+    if (
+      suppressTaskDelivery &&
+      (!task ||
+        !isSilentPluginTaskOwned({
+          task,
+          ownerKey: requesterInternalKey,
+          childSessionKey: sessionKey,
+          runId: childRunId,
+        }))
+    ) {
+      throw new Error("ACP task registry entry could not be persisted for the requester.");
     }
   } catch (error) {
-    log.warn("Failed to create background task for ACP spawn", {
+    await cleanupFailedAcpSpawn({
+      cfg,
       sessionKey,
-      runId: childRunId,
-      error,
+      shouldDeleteSession: true,
+      deleteTranscript: true,
+      runtimeCloseHandle: initializedRuntime,
+    });
+    return createAcpSpawnFailure({
+      status: "error",
+      errorCode: "spawn_failed",
+      error: summarizeError(error),
+      childSessionKey: sessionKey,
     });
   }
 
@@ -1717,4 +1777,23 @@ export async function spawnAcpDirect(
     ...(deliveryPlan.useInlineDelivery ? { inlineDelivery: true } : {}),
     note: spawnMode === "session" ? ACP_SPAWN_SESSION_ACCEPTED_NOTE : ACP_SPAWN_ACCEPTED_NOTE,
   };
+}
+
+/** Standard ACP spawn path used by agent tools and Gateway runtime code. */
+export async function spawnAcpDirect(
+  params: SpawnAcpParams,
+  ctx: SpawnAcpContext,
+): Promise<SpawnAcpResult> {
+  return await spawnAcp(params, ctx, { silentTaskDelivery: false });
+}
+
+/**
+ * Internal plugin-runtime ACP path. It suppresses all child-to-human delivery
+ * while retaining a requester-owned task record for trusted finalizers.
+ */
+export async function spawnAcpPluginRun(
+  params: SpawnAcpParams,
+  ctx: SpawnAcpContext,
+): Promise<SpawnAcpResult> {
+  return await spawnAcp(params, ctx, { silentTaskDelivery: true });
 }
