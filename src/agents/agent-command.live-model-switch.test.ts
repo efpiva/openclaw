@@ -1,3 +1,4 @@
+import type { AcpRuntimeEvent } from "@openclaw/acp-core/runtime/types";
 /** Tests live model switching behavior in active agent command sessions. */
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { SessionEntry } from "../config/sessions.js";
@@ -4002,6 +4003,58 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
         sessionKey: "agent:main:main",
       }),
     );
+  });
+
+  it("awaits an ACP runtime error terminal hook instead of a success hook", async () => {
+    state.acpResolveSessionMock.mockReturnValue({
+      kind: "ready",
+      meta: {
+        agent: "claude",
+        cwd: "/tmp/workspace",
+      },
+    });
+    const runAcpTerminal = vi.fn(async () => undefined);
+    state.acpTerminalHookRunnerMock = {
+      hasHooks: (hookName: string) => hookName === "acp_terminal",
+      runAcpTerminal,
+    };
+    state.acpRunTurnMock.mockImplementationOnce(async (params: unknown) => {
+      const onEvent = (params as { onEvent?: (event: AcpRuntimeEvent) => void }).onEvent;
+      onEvent?.({
+        type: "error",
+        code: "ACP_TURN_FAILED",
+        detailCode: "RATE_LIMITED",
+        message: "copilot upstream: 429 Too Many Requests",
+        retryable: true,
+      });
+    });
+
+    await expect(
+      agentCommand({
+        message: "rate-limited ACP review",
+        sessionKey: "agent:main:main",
+      }),
+    ).rejects.toThrow("429 Too Many Requests");
+
+    expect(runAcpTerminal).toHaveBeenCalledTimes(1);
+    expect(runAcpTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "default",
+        error: "copilot upstream: 429 Too Many Requests",
+        errorCode: "ACP_TURN_FAILED",
+        outcome: "error",
+        sessionKey: "agent:main:main",
+      }),
+      expect.any(Object),
+    );
+    expect(runAcpTerminal).not.toHaveBeenCalledWith(
+      expect.objectContaining({ outcome: "ok" }),
+      expect.any(Object),
+    );
+    const terminalEvent = runAcpTerminal.mock.calls[0]?.[0] as Record<string, unknown>;
+    expect(terminalEvent).not.toHaveProperty("terminalReply");
+    expect(state.emitAcpLifecycleErrorMock).toHaveBeenCalledTimes(1);
+    expect(state.emitAcpLifecycleEndMock).not.toHaveBeenCalled();
   });
 
   it("does not invoke acp_terminal for a non-ACP run", async () => {

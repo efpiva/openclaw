@@ -1,3 +1,4 @@
+import type { AcpRuntimeEvent } from "@openclaw/acp-core/runtime/types";
 /** Main agent command orchestration for sessions, model selection, delivery, and attempts. */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
 import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
@@ -179,6 +180,7 @@ async function runAcpTerminalHook(params: {
   workspaceDir: string;
   outcome: "ok" | "error";
   error?: string;
+  errorCode?: string;
   terminalText?: string;
 }): Promise<void> {
   const hookRunner = getGlobalHookRunner();
@@ -192,6 +194,9 @@ async function runAcpTerminalHook(params: {
       agentId: params.agentId,
       outcome: params.outcome,
       ...(params.error ? { error: truncateUtf16Safe(params.error.replace(/\0/gu, ""), 4096) } : {}),
+      ...(params.errorCode
+        ? { errorCode: truncateUtf16Safe(params.errorCode.replace(/\0/gu, ""), 128) }
+        : {}),
       ...(params.outcome === "ok"
         ? { terminalReply: buildAcpTerminalReplySnapshot(params.terminalText ?? "") }
         : {}),
@@ -1148,6 +1153,7 @@ async function agentCommandInternal(
         const visibleTextAccumulator = attemptExecutionRuntime.createAcpVisibleTextAccumulator();
         let stopReason: string | undefined;
         let resultStatus: "completed" | "cancelled" | undefined;
+        let terminalAcpError: Extract<AcpRuntimeEvent, { type: "error" }> | undefined;
         let terminalOutcome: "blocked" | undefined;
         try {
           const {
@@ -1207,6 +1213,13 @@ async function agentCommandInternal(
                 resultStatus = event.status;
                 return;
               }
+              if (event.type === "error") {
+                terminalAcpError = {
+                  ...event,
+                  message: truncateUtf16Safe(event.message.replace(/\0/gu, ""), 4096),
+                };
+                return;
+              }
               if (event.type !== "text_delta") {
                 return;
               }
@@ -1227,6 +1240,16 @@ async function agentCommandInternal(
               });
             },
           });
+          if (terminalAcpError) {
+            const runtimeError = Object.assign(new Error(terminalAcpError.message), {
+              ...(terminalAcpError.code ? { code: terminalAcpError.code } : {}),
+              ...(terminalAcpError.detailCode ? { detailCode: terminalAcpError.detailCode } : {}),
+              ...(terminalAcpError.retryable === undefined
+                ? {}
+                : { retryable: terminalAcpError.retryable }),
+            });
+            throw runtimeError;
+          }
           if (isAgentRunRestartAbortReason(opts.abortSignal?.reason)) {
             throw opts.abortSignal?.reason;
           }
@@ -1245,6 +1268,7 @@ async function agentCommandInternal(
             workspaceDir,
             outcome: "error",
             error: formatErrorMessage(acpError),
+            errorCode: terminalAcpError?.code ?? acpError.code,
           });
           attemptExecutionRuntime.emitAcpLifecycleError({
             runId,

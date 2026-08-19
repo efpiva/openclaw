@@ -441,6 +441,8 @@ export type PluginHookAcpTerminalEvent = {
   agentId: string;
   outcome: "ok" | "error";
   error?: string;
+  /** Bounded ACP runtime error code for error terminal outcomes. */
+  errorCode?: string;
   terminalReply?: AgentRunTerminalReplySnapshot;
 };
 
