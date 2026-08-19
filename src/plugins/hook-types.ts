@@ -89,6 +89,7 @@ export type PluginHookName =
   | "llm_input"
   | "llm_output"
   | "before_agent_finalize"
+  | "acp_terminal"
   | "agent_end"
   | "before_compaction"
   | "after_compaction"
@@ -137,6 +138,7 @@ export const PLUGIN_HOOK_NAMES = [
   "llm_input",
   "llm_output",
   "before_agent_finalize",
+  "acp_terminal",
   "agent_end",
   "before_compaction",
   "after_compaction",
@@ -250,6 +252,7 @@ export const CONVERSATION_HOOK_NAMES = [
   "llm_input",
   "llm_output",
   "before_agent_finalize",
+  "acp_terminal",
   "agent_end",
   "before_agent_run",
 ] as const satisfies readonly PluginHookName[];
@@ -418,6 +421,27 @@ export type PluginHookBeforeAgentFinalizeEvent = {
   stopHookActive: boolean;
   lastAssistantMessage?: string;
   messages?: unknown[];
+};
+
+export type AgentRunTerminalReplySnapshot =
+  | {
+      disposition: "visible";
+      /** Bounded visible terminal text with NUL bytes removed. */
+      text: string;
+      truncated: boolean;
+    }
+  | {
+      disposition: "empty";
+    };
+
+/** Awaited terminal outcome for a direct ACP turn. */
+export type PluginHookAcpTerminalEvent = {
+  runId: string;
+  sessionKey: string;
+  agentId: string;
+  outcome: "ok" | "error";
+  error?: string;
+  terminalReply?: AgentRunTerminalReplySnapshot;
 };
 
 export type PluginHookBeforeAgentFinalizeResult = {
@@ -1150,6 +1174,10 @@ export type PluginHookHandlerMap = {
     | Promise<PluginHookBeforeAgentFinalizeResult | void>
     | PluginHookBeforeAgentFinalizeResult
     | void;
+  acp_terminal: (
+    event: PluginHookAcpTerminalEvent,
+    ctx: PluginHookAgentContext,
+  ) => Promise<void> | void;
   agent_end: (event: PluginHookAgentEndEvent, ctx: PluginHookAgentContext) => Promise<void> | void;
   before_compaction: (
     event: PluginHookBeforeCompactionEvent,

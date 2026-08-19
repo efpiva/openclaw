@@ -73,6 +73,7 @@ const state = vi.hoisted(() => ({
   sessionStoreMock: undefined as unknown,
   storePathMock: undefined as string | undefined,
   resolvedSessionKeyMock: undefined as string | undefined,
+  acpTerminalHookRunnerMock: undefined as unknown,
 }));
 
 vi.mock("./model-fallback.js", () => ({
@@ -819,6 +820,10 @@ vi.mock("../acp/control-plane/manager.js", () => ({
   }),
 }));
 
+vi.mock("../plugins/hook-runner-global.js", () => ({
+  getGlobalHookRunner: () => state.acpTerminalHookRunnerMock,
+}));
+
 let agentCommand: typeof import("./agent-command.js").agentCommand;
 let agentCommandTesting: typeof import("./agent-command.js").testing;
 
@@ -1036,6 +1041,7 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     state.sessionStoreMock = undefined;
     state.storePathMock = undefined;
     state.resolvedSessionKeyMock = undefined;
+    state.acpTerminalHookRunnerMock = undefined;
     state.persistSessionEntryMock.mockImplementation(async (...args: unknown[]) => {
       const params = args[0] as {
         sessionStore?: Record<string, unknown>;
@@ -3920,6 +3926,94 @@ describe("agentCommand – LiveSessionModelSwitchError retry", () => {
     expect(state.emitAcpLifecycleErrorMock).toHaveBeenCalledWith(
       expect.objectContaining({ terminalOutcome: "blocked" }),
     );
+  });
+
+  it("awaits acp_terminal with the finalized ACP reply before delivery", async () => {
+    state.acpResolveSessionMock.mockReturnValue({
+      kind: "ready",
+      meta: {
+        agent: "claude",
+        cwd: "/tmp/workspace",
+      },
+    });
+    const runAcpTerminal = vi.fn(async () => undefined);
+    state.acpTerminalHookRunnerMock = {
+      hasHooks: (hookName: string) => hookName === "acp_terminal",
+      runAcpTerminal,
+    };
+    state.deliverAgentCommandResultMock.mockImplementation(async () => {
+      expect(runAcpTerminal).toHaveBeenCalledTimes(1);
+      return undefined;
+    });
+
+    await agentCommand({
+      message: "complete ACP review",
+      sessionKey: "agent:main:main",
+    });
+
+    expect(runAcpTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "default",
+        outcome: "ok",
+        sessionKey: "agent:main:main",
+        terminalReply: expect.objectContaining({
+          disposition: "visible",
+          text: "done",
+        }),
+      }),
+      expect.objectContaining({
+        agentId: "default",
+        sessionKey: "agent:main:main",
+      }),
+    );
+  });
+
+  it("awaits acp_terminal with an error outcome before throwing an ACP failure", async () => {
+    state.acpResolveSessionMock.mockReturnValue({
+      kind: "ready",
+      meta: {
+        agent: "claude",
+        cwd: "/tmp/workspace",
+      },
+    });
+    const runAcpTerminal = vi.fn(async () => undefined);
+    state.acpTerminalHookRunnerMock = {
+      hasHooks: (hookName: string) => hookName === "acp_terminal",
+      runAcpTerminal,
+    };
+    state.acpRunTurnMock.mockRejectedValueOnce(new Error("ACP unavailable"));
+
+    await expect(
+      agentCommand({
+        message: "failed ACP review",
+        sessionKey: "agent:main:main",
+      }),
+    ).rejects.toThrow("ACP unavailable");
+
+    expect(runAcpTerminal).toHaveBeenCalledWith(
+      expect.objectContaining({
+        agentId: "default",
+        error: "ACP unavailable",
+        outcome: "error",
+        sessionKey: "agent:main:main",
+      }),
+      expect.objectContaining({
+        agentId: "default",
+        sessionKey: "agent:main:main",
+      }),
+    );
+  });
+
+  it("does not invoke acp_terminal for a non-ACP run", async () => {
+    const runAcpTerminal = vi.fn(async () => undefined);
+    state.acpTerminalHookRunnerMock = {
+      hasHooks: (hookName: string) => hookName === "acp_terminal",
+      runAcpTerminal,
+    };
+
+    await runBasicAgentCommand();
+
+    expect(runAcpTerminal).not.toHaveBeenCalled();
   });
 
   it("preserves ACP cancelled results without a stop reason", async () => {

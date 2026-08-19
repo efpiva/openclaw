@@ -105,6 +105,7 @@ observation-only.
 | **`before_agent_run`**          | Inspect the final prompt and session messages before model submission; can block the run |
 | **`before_agent_reply`**        | Short-circuit the model turn with a synthetic reply or silence                           |
 | **`before_agent_finalize`**     | Inspect the natural final answer and request one more model pass                         |
+| `acp_terminal`                  | Observe an awaited ACP terminal outcome and bounded final reply snapshot                 |
 | `agent_end`                     | Observe final messages, success state, and run duration                                  |
 | `heartbeat_prompt_contribution` | Add heartbeat-only context for background monitor and lifecycle plugins                  |
 
@@ -423,6 +424,15 @@ context-window metadata, the hook event and context also include
 caps, plus `contextWindowSource` and `contextWindowReferenceTokens` when a
 lower cap was applied.
 
+`acp_terminal` runs only for ACP turns after OpenClaw has constructed the
+terminal reply snapshot and before it returns the ACP command result. Handlers
+run in priority order with a 15s budget. Errors and timeouts are logged and
+fail open so they cannot turn a successful ACP command into an error. The event
+contains exact `runId`, `sessionKey`, `agentId`, an `ok` or `error` outcome, and
+an optional bounded terminal reply snapshot. It is the ACP-specific terminal
+extension point; do not poll transcripts or infer terminal content from agent
+event subscribers.
+
 `before_agent_finalize` runs only when a harness is about to accept a natural
 final assistant answer. It is not the `/stop` cancellation path and does not
 run when the user aborts a turn. Return `{ action: "revise", reason }` to ask
@@ -451,7 +461,7 @@ passes the host will allow before continuing with the natural final answer.
 
 Non-bundled plugins that need raw conversation hooks (`before_model_resolve`,
 `before_agent_reply`, `llm_input`, `llm_output`, `before_agent_finalize`,
-`agent_end`, or `before_agent_run`) must set:
+`acp_terminal`, `agent_end`, or `before_agent_run`) must set:
 
 ```json
 {

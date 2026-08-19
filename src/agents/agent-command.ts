@@ -1,5 +1,6 @@
 /** Main agent command orchestration for sessions, model selection, delivery, and attempts. */
 import { normalizeOptionalString } from "@openclaw/normalization-core/string-coerce";
+import { truncateUtf16Safe } from "@openclaw/normalization-core/utf16-slice";
 import { sanitizeForLog } from "../../packages/terminal-core/src/ansi.js";
 import { resolveInlineAgentImageAttachments } from "../auto-reply/reply/agent-turn-attachments.js";
 import { sanitizePendingFinalDeliveryText } from "../auto-reply/reply/pending-final-delivery.js";
@@ -38,6 +39,7 @@ import { buildOutboundSessionContext } from "../infra/outbound/session-context.j
 import { parseStrictNonNegativeInteger } from "../infra/parse-finite-number.js";
 import { createSubsystemLogger } from "../logging/subsystem.js";
 import { normalizePluginsConfig } from "../plugins/config-state.js";
+import { getGlobalHookRunner } from "../plugins/hook-runner-global.js";
 import { loadManifestMetadataSnapshot } from "../plugins/manifest-contract-eligibility.js";
 import {
   classifySessionKeyShape,
@@ -154,6 +156,55 @@ import { hasNonzeroUsage } from "./usage.js";
 import { ensureAgentWorkspace } from "./workspace.js";
 
 const log = createSubsystemLogger("agents/agent-command");
+
+const ACP_TERMINAL_REPLY_MAX_CHARS = 1_000_000;
+
+function buildAcpTerminalReplySnapshot(text: string) {
+  const sanitized = text.replace(/\0/gu, "");
+  if (!sanitized) {
+    return { disposition: "empty" as const };
+  }
+  return {
+    disposition: "visible" as const,
+    text: truncateUtf16Safe(sanitized, ACP_TERMINAL_REPLY_MAX_CHARS),
+    truncated: sanitized.length > ACP_TERMINAL_REPLY_MAX_CHARS,
+  };
+}
+
+async function runAcpTerminalHook(params: {
+  runId: string;
+  sessionId: string;
+  sessionKey: string;
+  agentId: string;
+  workspaceDir: string;
+  outcome: "ok" | "error";
+  error?: string;
+  terminalText?: string;
+}): Promise<void> {
+  const hookRunner = getGlobalHookRunner();
+  if (!hookRunner?.hasHooks("acp_terminal") || typeof hookRunner.runAcpTerminal !== "function") {
+    return;
+  }
+  await hookRunner.runAcpTerminal(
+    {
+      runId: params.runId,
+      sessionKey: params.sessionKey,
+      agentId: params.agentId,
+      outcome: params.outcome,
+      ...(params.error ? { error: truncateUtf16Safe(params.error.replace(/\0/gu, ""), 4096) } : {}),
+      ...(params.outcome === "ok"
+        ? { terminalReply: buildAcpTerminalReplySnapshot(params.terminalText ?? "") }
+        : {}),
+    },
+    {
+      runId: params.runId,
+      sessionId: params.sessionId,
+      sessionKey: params.sessionKey,
+      agentId: params.agentId,
+      workspaceDir: params.workspaceDir,
+    },
+  );
+}
 
 function hasExactConfiguredProviderModel(params: {
   cfg: OpenClawConfig;
@@ -1186,6 +1237,15 @@ async function agentCommandInternal(
             fallbackCode: "ACP_TURN_FAILED",
             fallbackMessage: "ACP turn failed before completion.",
           });
+          await runAcpTerminalHook({
+            runId,
+            sessionId,
+            sessionKey,
+            agentId: sessionAgentId,
+            workspaceDir,
+            outcome: "error",
+            error: formatErrorMessage(acpError),
+          });
           attemptExecutionRuntime.emitAcpLifecycleError({
             runId,
             toolTracker: acpToolTracker,
@@ -1277,6 +1337,15 @@ async function agentCommandInternal(
           });
           throw restartAbortReason;
         }
+        await runAcpTerminalHook({
+          runId,
+          sessionId,
+          sessionKey,
+          agentId: sessionAgentId,
+          workspaceDir,
+          outcome: "ok",
+          terminalText: finalText,
+        });
         attemptExecutionRuntime.emitAcpLifecycleEnd({
           runId,
           toolTracker: acpToolTracker,

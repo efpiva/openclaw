@@ -20,6 +20,7 @@ import type {
   PluginHookAfterCompactionEvent,
   PluginHookAfterToolCallEvent,
   PluginHookAgentContext,
+  PluginHookAcpTerminalEvent,
   PluginHookAgentEndEvent,
   PluginHookBeforeAgentFinalizeEvent,
   PluginHookBeforeAgentFinalizeResult,
@@ -122,6 +123,7 @@ export type {
   PluginHookLlmOutputEvent,
   PluginHookBeforeAgentFinalizeEvent,
   PluginHookBeforeAgentFinalizeResult,
+  PluginHookAcpTerminalEvent,
   PluginHookAgentEndEvent,
   PluginHookBeforeCompactionEvent,
   PluginHookBeforeResetEvent,
@@ -234,6 +236,7 @@ const DEFAULT_MODIFYING_HOOK_TIMEOUT_MS_BY_HOOK: Partial<Record<PluginHookName, 
   // handler must not freeze final delivery or keep compaction retry recovery
   // unresolved; timeout fail-opens with the original final answer.
   before_agent_finalize: 15_000,
+  acp_terminal: 15_000,
   before_prompt_build: 15_000,
   resolve_exec_env: 15_000,
 };
@@ -983,6 +986,17 @@ export function createHookRunner(
   }
 
   /**
+   * Run awaited ACP terminal handlers in priority order. A handler failure or
+   * timeout is fail-open: ACP command delivery must still complete.
+   */
+  async function runAcpTerminal(
+    event: PluginHookAcpTerminalEvent,
+    ctx: PluginHookAgentContext,
+  ): Promise<void> {
+    await runModifyingHook<"acp_terminal", void>("acp_terminal", withAgentRunId(event, ctx), ctx);
+  }
+
+  /**
    * Run before_compaction hook.
    */
   async function runBeforeCompaction(
@@ -1650,6 +1664,7 @@ export function createHookRunner(
     runLlmInput,
     runLlmOutput,
     runBeforeAgentFinalize,
+    runAcpTerminal,
     runAgentEnd,
     runBeforeCompaction,
     runAfterCompaction,
